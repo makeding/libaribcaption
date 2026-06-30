@@ -17,7 +17,6 @@
  */
 
 #include <cassert>
-#include <algorithm>
 #include <cstring>
 #include <cstdint>
 #include <cmath>
@@ -100,6 +99,45 @@ static auto LoadSFNTTable(FT_Face face, FT_Tag tag) -> std::vector<uint8_t> {
         return {};
     }
     return gsub;
+}
+
+static auto CalculateBaselineFromGlyph(FT_Face face, FT_UInt glyph_index, int char_height) -> std::optional<int> {
+    if (glyph_index == 0) {
+        return std::nullopt;
+    }
+    if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_BITMAP)) {
+        return std::nullopt;
+    }
+
+    ScopedHolder<FT_Glyph> glyph_image(nullptr, FT_Done_Glyph);
+    if (FT_Get_Glyph(face->glyph, &glyph_image)) {
+        return std::nullopt;
+    }
+    if (FT_Glyph_To_Bitmap(&glyph_image, FT_RENDER_MODE_NORMAL, nullptr, true)) {
+        return std::nullopt;
+    }
+
+    auto bitmap_glyph = reinterpret_cast<FT_BitmapGlyph>(glyph_image.Get());
+    int glyph_top = -bitmap_glyph->top;
+    int glyph_bottom = glyph_top + static_cast<int>(bitmap_glyph->bitmap.rows);
+    int glyph_height = glyph_bottom - glyph_top;
+    return (char_height - glyph_height) / 2 - glyph_top;
+}
+
+static auto CalculateReferenceBaseline(FT_Face face, int char_height) -> std::optional<int> {
+    static constexpr uint32_t kReferenceChars[] = {
+            0x6C38,  // CJK ideograph "永"
+            0x56FD,  // CJK ideograph "国"
+            0x3042,  // Hiragana "あ"
+    };
+
+    for (uint32_t ch : kReferenceChars) {
+        auto baseline = CalculateBaselineFromGlyph(face, FT_Get_Char_Index(face, ch), char_height);
+        if (baseline) {
+            return baseline;
+        }
+    }
+    return std::nullopt;
 }
 
 auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x, int target_y,
@@ -203,8 +241,18 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
         return TextRenderStatus::kOtherError;
     }
 
+    int baseline = static_cast<int>(face->size->metrics.ascender >> 6);
+    int ascender = static_cast<int>(face->size->metrics.ascender >> 6);
+    int descender = static_cast<int>(face->size->metrics.descender >> 6);
     int underline = static_cast<int>(FT_MulFix(face->underline_position, face->size->metrics.x_scale) >> 6);
     int underline_thickness = static_cast<int>(FT_MulFix(face->underline_thickness, face->size->metrics.x_scale) >> 6);
+
+    int em_height = ascender + std::abs(descender);
+    int em_adjust_y = (char_height - em_height) / 2;
+    baseline += em_adjust_y;
+    if (auto reference_baseline = CalculateReferenceBaseline(face, char_height)) {
+        baseline = *reference_baseline;
+    }
 
     if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_BITMAP)) {
         log_->e("Freetype: FT_Load_Glyph failed");
@@ -253,31 +301,6 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
     }
 
     Canvas canvas(render_ctx.GetBitmap());
-
-    int glyph_top = 0;
-    int glyph_bottom = 0;
-    bool has_glyph_bounds = false;
-    auto include_glyph_bounds = [&](FT_Glyph glyph) {
-        if (!glyph) return;
-        auto bitmap_glyph = reinterpret_cast<FT_BitmapGlyph>(glyph);
-        int top = -bitmap_glyph->top;
-        int bottom = top + static_cast<int>(bitmap_glyph->bitmap.rows);
-        if (!has_glyph_bounds) {
-            glyph_top = top;
-            glyph_bottom = bottom;
-            has_glyph_bounds = true;
-        } else {
-            glyph_top = std::min(glyph_top, top);
-            glyph_bottom = std::max(glyph_bottom, bottom);
-        }
-    };
-    include_glyph_bounds(glyph_image.Get());
-    include_glyph_bounds(border_glyph_image.Get());
-    int baseline = static_cast<int>(face->size->metrics.ascender >> 6);
-    if (has_glyph_bounds) {
-        int glyph_height = glyph_bottom - glyph_top;
-        baseline = (char_height - glyph_height) / 2 - glyph_top;
-    }
 
     // Draw Underline if required
     if ((style & kCharStyleUnderline) && underline_info && underline_thickness > 0) {
