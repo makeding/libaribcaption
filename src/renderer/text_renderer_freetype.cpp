@@ -17,6 +17,7 @@
  */
 
 #include <cassert>
+#include <algorithm>
 #include <cstring>
 #include <cstdint>
 #include <cmath>
@@ -202,14 +203,8 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
         return TextRenderStatus::kOtherError;
     }
 
-    int baseline = static_cast<int>(face->size->metrics.ascender >> 6);
-    int ascender = static_cast<int>(face->size->metrics.ascender >> 6);
-    int descender = static_cast<int>(face->size->metrics.descender >> 6);
     int underline = static_cast<int>(FT_MulFix(face->underline_position, face->size->metrics.x_scale) >> 6);
     int underline_thickness = static_cast<int>(FT_MulFix(face->underline_thickness, face->size->metrics.x_scale) >> 6);
-
-    int em_height = ascender + std::abs(descender);
-    int em_adjust_y = (char_height - em_height) / 2;
 
     if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_BITMAP)) {
         log_->e("Freetype: FT_Load_Glyph failed");
@@ -259,9 +254,34 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
 
     Canvas canvas(render_ctx.GetBitmap());
 
+    int glyph_top = 0;
+    int glyph_bottom = 0;
+    bool has_glyph_bounds = false;
+    auto include_glyph_bounds = [&](FT_Glyph glyph) {
+        if (!glyph) return;
+        auto bitmap_glyph = reinterpret_cast<FT_BitmapGlyph>(glyph);
+        int top = -bitmap_glyph->top;
+        int bottom = top + static_cast<int>(bitmap_glyph->bitmap.rows);
+        if (!has_glyph_bounds) {
+            glyph_top = top;
+            glyph_bottom = bottom;
+            has_glyph_bounds = true;
+        } else {
+            glyph_top = std::min(glyph_top, top);
+            glyph_bottom = std::max(glyph_bottom, bottom);
+        }
+    };
+    include_glyph_bounds(glyph_image.Get());
+    include_glyph_bounds(border_glyph_image.Get());
+    int baseline = static_cast<int>(face->size->metrics.ascender >> 6);
+    if (has_glyph_bounds) {
+        int glyph_height = glyph_bottom - glyph_top;
+        baseline = (char_height - glyph_height) / 2 - glyph_top;
+    }
+
     // Draw Underline if required
     if ((style & kCharStyleUnderline) && underline_info && underline_thickness > 0) {
-        int underline_y = target_y + baseline + em_adjust_y + std::abs(underline);
+        int underline_y = target_y + baseline + std::abs(underline);
         Rect underline_rect(underline_info->start_x,
                             underline_y,
                             underline_info->start_x + underline_info->width,
@@ -284,7 +304,7 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
     if (border_glyph_image) {
         auto border_bitmap_glyph = reinterpret_cast<FT_BitmapGlyph>(border_glyph_image.Get());
         int start_x = target_x + border_bitmap_glyph->left;
-        int start_y = target_y + baseline + em_adjust_y - border_bitmap_glyph->top;
+        int start_y = target_y + baseline - border_bitmap_glyph->top;
 
         Bitmap bmp = FTBitmapToColoredBitmap(border_bitmap_glyph->bitmap, stroke_color);
         canvas.DrawBitmap(bmp, start_x, start_y);
@@ -294,7 +314,7 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
     if (glyph_image) {
         auto bitmap_glyph = reinterpret_cast<FT_BitmapGlyph>(glyph_image.Get());
         int start_x = target_x + bitmap_glyph->left;
-        int start_y = target_y + baseline + em_adjust_y - bitmap_glyph->top;
+        int start_y = target_y + baseline - bitmap_glyph->top;
 
         Bitmap bmp = FTBitmapToColoredBitmap(bitmap_glyph->bitmap, color);
         canvas.DrawBitmap(bmp, start_x, start_y);
