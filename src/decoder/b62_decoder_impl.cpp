@@ -1192,7 +1192,16 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     std::sort(boundaries.begin(), boundaries.end());
     boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
 
-    for (size_t index = 0; index < boundaries.size(); ++index) {
+    size_t first_boundary = 0;
+    if (options.document_pts != PTS_NOPTS) {
+        const auto after_current = std::upper_bound(boundaries.begin(), boundaries.end(), options.document_pts);
+        if (after_current != boundaries.begin()) {
+            first_boundary = static_cast<size_t>(std::distance(boundaries.begin(), after_current) - 1);
+        }
+    }
+    constexpr size_t kMaxPresentationEvents = 300;
+    const size_t last_boundary = std::min(boundaries.size(), first_boundary + kMaxPresentationEvents);
+    for (size_t index = first_boundary; index < last_boundary; ++index) {
         const int64_t pts = boundaries[index];
         Caption scene;
         scene.flags = kCaptionFlagsClearScreen;
