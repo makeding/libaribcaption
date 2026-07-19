@@ -64,6 +64,18 @@ constexpr char kVerticalTTML[] = R"TTML(<?xml version="1.0" encoding="UTF-8"?>
   </body>
 </tt>)TTML";
 
+constexpr char kOverlongCenteredTTML[] = R"TTML(<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    ttp:extent="3840px 2160px" xml:lang="ja">
+  <head>
+    <styling><style xml:id="base" tts:fontSize="120px"/></styling>
+    <layout><region xml:id="narrow" tts:origin="1000px 100px" tts:extent="200px 200px"/></layout>
+  </head>
+  <body><div><p region="narrow" style="base">中央寄せ</p></div></body>
+</tt>)TTML";
+
 }  // namespace
 
 int main() {
@@ -114,6 +126,12 @@ int main() {
     assert(result.captions[0].regions[0].chars[0].char_width == 120);
     assert(result.captions[0].regions[0].chars[0].char_height == 180);
     assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 20);
+
+    decoder.SetFontScale(1.0f);
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kOverlongCenteredTTML),
+                            std::strlen(kOverlongCenteredTTML), 30000, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].regions[0].chars[0].x < result.captions[0].regions[0].x);
 
     return 0;
 }

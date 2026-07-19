@@ -763,9 +763,9 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
         }
         int x = definition.x;
         if (text_align == "center") {
-            x += std::max(0, (definition.width - line_width) / 2);
+            x += (definition.width - line_width) / 2;
         } else if (text_align == "right" || text_align == "end") {
-            x += std::max(0, definition.width - line_width);
+            x += definition.width - line_width;
         }
         for (const CharacterPlacement& placement : line) {
             const Style& style = placement.span->style;
@@ -832,9 +832,9 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
         std::string text_align = StyleValue(definition.style, "textAlign", "center");
         int y = definition.y;
         if (text_align == "center") {
-            y += std::max(0, (definition.height - column_height) / 2);
+            y += (definition.height - column_height) / 2;
         } else if (text_align == "end" || text_align == "right") {
-            y += std::max(0, definition.height - column_height);
+            y += definition.height - column_height;
         }
         for (const CharacterPlacement& placement : column) {
             FontSize font_size = StyleFontSize(placement.span->style, plane, default_font_size, font_scale);
