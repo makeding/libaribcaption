@@ -296,9 +296,9 @@ std::optional<ColorRGBA> ParseColor(std::string value) {
 }
 
 void ApplyStyleAttributes(const tinyxml2::XMLElement* element, Style& style) {
-    static constexpr std::array<std::string_view, 20> kStyleAttributes = {
+    static constexpr std::array<std::string_view, 21> kStyleAttributes = {
         "fontSize",     "lineHeight", "fontWeight",     "fontStyle",   "color",       "backgroundColor",
-        "displayAlign", "textAlign",  "textDecoration", "textShadow",  "writingMode", "direction",
+        "displayAlign", "textAlign",  "textDecoration", "textOutline", "textShadow",  "writingMode", "direction",
         "opacity",      "border",     "border-top",     "border-bottom", "border-left", "border-right",
         "letter-spacing", "text-shadow",
     };
@@ -521,6 +521,14 @@ ColorRGBA StyleColor(const Style& style, const char* key, ColorRGBA fallback) {
 }
 
 ColorRGBA StrokeColor(const Style& style) {
+    auto outline = style.find("textOutline");
+    if (outline != style.end()) {
+        size_t first_space = outline->second.find_first_of(" \t");
+        std::string value = outline->second.substr(0, first_space);
+        if (auto color = ParseColor(value)) {
+            return *color;
+        }
+    }
     auto shadow = style.find("textShadow");
     if (shadow != style.end()) {
         size_t last_space = shadow->second.find_last_of(" \t");
@@ -543,7 +551,7 @@ CharStyle MakeCharStyle(const Style& style) {
     if (StyleValue(style, "textDecoration").find("underline") != std::string::npos) {
         flags |= kCharStyleUnderline;
     }
-    if (style.count("textShadow")) {
+    if (style.count("textOutline") || style.count("textShadow")) {
         flags |= kCharStyleStroke;
     }
     return static_cast<CharStyle>(flags);
@@ -746,7 +754,7 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
     region.width = definition.width;
     region.height = definition.height;
     std::unordered_map<const InlineSpan*, BoundingBox> span_bounds;
-    std::string text_align = StyleValue(definition.style, "textAlign", "start");
+    std::string text_align = StyleValue(definition.style, "textAlign", "center");
 
     for (const auto& line : lines) {
         int line_width = 0;
@@ -821,7 +829,7 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
         for (const CharacterPlacement& placement : column) {
             column_height += placement.advance;
         }
-        std::string text_align = StyleValue(definition.style, "textAlign", "start");
+        std::string text_align = StyleValue(definition.style, "textAlign", "center");
         int y = definition.y;
         if (text_align == "center") {
             y += std::max(0, (definition.height - column_height) / 2);

@@ -87,6 +87,7 @@ int main() {
     assert(result.captions[0].regions[0].y == 1480);
     assert(result.captions[0].regions[0].width == 3360);
     assert(result.captions[0].regions[0].height == 420);
+    assert(result.captions[0].regions[0].chars[0].x > result.captions[0].regions[0].x);
     assert(result.captions[0].regions[0].chars[0].char_width == 96);
     assert(result.captions[0].regions[0].chars[0].char_height == 144);
     assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 16);
