@@ -131,7 +131,8 @@ int main() {
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kOverlongCenteredTTML),
                             std::strlen(kOverlongCenteredTTML), 30000, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
-    assert(result.captions[0].regions[0].chars[0].x < result.captions[0].regions[0].x);
+    assert(result.captions[0].regions[0].x < 1000);
+    assert(result.captions[0].regions[0].width > 200);
 
     return 0;
 }

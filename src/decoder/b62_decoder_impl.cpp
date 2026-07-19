@@ -672,6 +672,26 @@ std::vector<uint32_t> DecodeUTF8(std::string_view text) {
     return result;
 }
 
+void ExpandRegionToFitCharacters(CaptionRegion& region) {
+    if (region.chars.empty()) {
+        return;
+    }
+    int left = region.x;
+    int top = region.y;
+    int right = region.x + region.width;
+    int bottom = region.y + region.height;
+    for (const CaptionChar& character : region.chars) {
+        left = std::min(left, character.x);
+        top = std::min(top, character.y);
+        right = std::max(right, character.x + character.section_width());
+        bottom = std::max(bottom, character.y + character.section_height());
+    }
+    region.x = left;
+    region.y = top;
+    region.width = right - left;
+    region.height = bottom - top;
+}
+
 void AppendRubyRegion(const InlineSpan& span,
                       const BoundingBox& base,
                       const std::array<int, 2>& plane,
@@ -783,6 +803,7 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
         y += line_height;
     }
     if (!region.chars.empty()) {
+        ExpandRegionToFitCharacters(region);
         caption.regions.push_back(std::move(region));
     }
     for (const InlineSpan& span : spans) {
@@ -851,6 +872,7 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
         x += right_to_left ? -column_width : column_width;
     }
     if (!region.chars.empty()) {
+        ExpandRegionToFitCharacters(region);
         caption.regions.push_back(std::move(region));
     }
 }
