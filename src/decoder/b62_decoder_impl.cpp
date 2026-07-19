@@ -67,6 +67,11 @@ struct FontSize {
     int height = 0;
 };
 
+struct BorderPaint {
+    bool visible = false;
+    ColorRGBA color;
+};
+
 struct BoundingBox {
     int left = std::numeric_limits<int>::max();
     int top = std::numeric_limits<int>::max();
@@ -291,10 +296,11 @@ std::optional<ColorRGBA> ParseColor(std::string value) {
 }
 
 void ApplyStyleAttributes(const tinyxml2::XMLElement* element, Style& style) {
-    static constexpr std::array<std::string_view, 16> kStyleAttributes = {
+    static constexpr std::array<std::string_view, 20> kStyleAttributes = {
         "fontSize",     "lineHeight", "fontWeight",     "fontStyle",   "color",       "backgroundColor",
         "displayAlign", "textAlign",  "textDecoration", "textShadow",  "writingMode", "direction",
-        "opacity",      "border",     "letter-spacing", "text-shadow",
+        "opacity",      "border",     "border-top",     "border-bottom", "border-left", "border-right",
+        "letter-spacing", "text-shadow",
     };
     for (std::string_view name : kStyleAttributes) {
         if (const char* value = FindAttribute(element, name)) {
@@ -505,10 +511,10 @@ ColorRGBA StyleColor(const Style& style, const char* key, ColorRGBA fallback) {
 }
 
 ColorRGBA StrokeColor(const Style& style) {
-    auto border = style.find("border");
-    if (border != style.end()) {
-        size_t last_space = border->second.find_last_of(" \t");
-        std::string value = last_space == std::string::npos ? border->second : border->second.substr(last_space + 1);
+    auto shadow = style.find("textShadow");
+    if (shadow != style.end()) {
+        size_t last_space = shadow->second.find_last_of(" \t");
+        std::string value = last_space == std::string::npos ? shadow->second : shadow->second.substr(last_space + 1);
         if (auto color = ParseColor(value)) {
             return *color;
         }
@@ -527,10 +533,77 @@ CharStyle MakeCharStyle(const Style& style) {
     if (StyleValue(style, "textDecoration").find("underline") != std::string::npos) {
         flags |= kCharStyleUnderline;
     }
-    if (style.count("border") || style.count("textShadow")) {
+    if (style.count("textShadow")) {
         flags |= kCharStyleStroke;
     }
     return static_cast<CharStyle>(flags);
+}
+
+BorderPaint ParseBorder(std::string value) {
+    value = TrimASCII(std::move(value));
+    std::vector<std::string> tokens;
+    size_t position = 0;
+    while (position < value.size()) {
+        position = value.find_first_not_of(" \t", position);
+        if (position == std::string::npos) {
+            break;
+        }
+        size_t end = value.find_first_of(" \t", position);
+        tokens.push_back(value.substr(position, end - position));
+        position = end == std::string::npos ? value.size() : end;
+    }
+    BorderPaint paint;
+    if (tokens.empty() || tokens[0] == "none" || tokens[0] == "hidden") {
+        return paint;
+    }
+    paint.visible = true;
+    if (tokens.size() >= 3) {
+        paint.color = ParseColor(tokens[2]).value_or(ColorRGBA());
+    }
+    return paint;
+}
+
+EnclosureStyle MakeEnclosureStyle(const Style& style) {
+    unsigned flags = kEnclosureStyleDefault;
+    auto border = style.find("border");
+    if (border != style.end() && ParseBorder(border->second).visible) {
+        flags = kEnclosureStyleTop | kEnclosureStyleBottom | kEnclosureStyleLeft | kEnclosureStyleRight;
+    }
+    static constexpr std::array<std::pair<const char*, EnclosureStyle>, 4> kSides = {{
+        {"border-top", kEnclosureStyleTop},
+        {"border-bottom", kEnclosureStyleBottom},
+        {"border-left", kEnclosureStyleLeft},
+        {"border-right", kEnclosureStyleRight},
+    }};
+    for (const auto& [key, side] : kSides) {
+        auto it = style.find(key);
+        if (it == style.end()) {
+            continue;
+        }
+        if (ParseBorder(it->second).visible) {
+            flags |= side;
+        } else {
+            flags &= ~static_cast<unsigned>(side);
+        }
+    }
+    return static_cast<EnclosureStyle>(flags);
+}
+
+BorderPaint MakeEnclosurePaint(const Style& style) {
+    static constexpr std::array<const char*, 5> kBorderAttributes = {
+        "border", "border-top", "border-bottom", "border-left", "border-right",
+    };
+    for (const char* key : kBorderAttributes) {
+        auto it = style.find(key);
+        if (it == style.end()) {
+            continue;
+        }
+        BorderPaint paint = ParseBorder(it->second);
+        if (paint.visible) {
+            return paint;
+        }
+    }
+    return {};
 }
 
 CaptionChar MakeCaptionChar(uint32_t codepoint,
@@ -556,6 +629,11 @@ CaptionChar MakeCaptionChar(uint32_t codepoint,
     character.back_color = StyleColor(style, "backgroundColor", ColorRGBA(0, 0, 0, 0));
     character.stroke_color = StrokeColor(style);
     character.style = MakeCharStyle(style);
+    character.enclosure_style = MakeEnclosureStyle(style);
+    BorderPaint enclosure = MakeEnclosurePaint(style);
+    if (enclosure.visible && !(character.style & kCharStyleStroke)) {
+        character.stroke_color = enclosure.color;
+    }
     utf::UTF8AppendCodePoint(character.u8str, codepoint);
     return character;
 }
@@ -671,11 +749,12 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
             const Style& style = placement.span->style;
             FontSize font_size = StyleFontSize(style, plane, default_font_size);
             int letter_spacing = StyleLength(style, "letterSpacing", definition.width, 0);
-            int char_y = y + std::max(0, (line_height - font_size.height) / 2);
             bool halfwidth = unicode::IsHalfwidthCharacter(placement.codepoint);
-            CaptionChar character = MakeCaptionChar(placement.codepoint, style, x, char_y, font_size.width,
-                                                     font_size.height, font_size.height, letter_spacing, halfwidth);
-            span_bounds[placement.span].Include(x, char_y, placement.advance, font_size.height);
+            CaptionChar character = MakeCaptionChar(placement.codepoint, style, x, y, font_size.width,
+                                                     font_size.height, line_height, letter_spacing, halfwidth);
+            int glyph_x = x + character.char_horizontal_spacing / 2;
+            int glyph_y = y + character.char_vertical_spacing / 2;
+            span_bounds[placement.span].Include(glyph_x, glyph_y, placement.advance, font_size.height);
             region.chars.push_back(std::move(character));
             x += placement.advance;
         }
@@ -736,9 +815,9 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
             FontSize font_size = StyleFontSize(placement.span->style, plane, default_font_size);
             int letter_spacing = StyleLength(placement.span->style, "letterSpacing", definition.height, 0);
             CaptionChar character = MakeCaptionChar(placement.codepoint, placement.span->style,
-                                                    x + std::max(0, (column_width - font_size.width) / 2), y,
-                                                    font_size.width, font_size.height,
+                                                    x, y, font_size.width, font_size.height,
                                                     font_size.height + letter_spacing, 0, false);
+            character.char_horizontal_spacing = std::max(0, column_width - font_size.width);
             character.char_vertical_spacing = letter_spacing;
             region.chars.push_back(std::move(character));
             y += placement.advance;

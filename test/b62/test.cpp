@@ -89,6 +89,12 @@ int main() {
     assert(result.captions[0].regions[0].height == 420);
     assert(result.captions[0].regions[0].chars[0].char_width == 96);
     assert(result.captions[0].regions[0].chars[0].char_height == 144);
+    assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 16);
+    assert(!(result.captions[0].regions[0].chars[0].style & aribcaption::kCharStyleStroke));
+    assert(result.captions[0].regions[0].chars[0].enclosure_style ==
+           (aribcaption::kEnclosureStyleTop | aribcaption::kEnclosureStyleBottom |
+            aribcaption::kEnclosureStyleLeft | aribcaption::kEnclosureStyleRight));
+    assert(result.captions[0].regions[0].chars[0].stroke_color.u32 == aribcaption::ColorRGBA(0, 0, 0).u32);
     assert(result.captions[0].regions[1].is_ruby);
 
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kVerticalTTML), std::strlen(kVerticalTTML), 20000, result);

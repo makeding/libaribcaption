@@ -137,31 +137,33 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
 
         // Draw enclosure if needed
         if (ch.enclosure_style) {
+            ColorRGBA enclosure_color =
+                (!(ch.style & CharStyle::kCharStyleStroke) && ch.stroke_color.a != 0) ? ch.stroke_color : ch.text_color;
             int w = std::max(ScaleX(1), 1);  // use floor
             int h = std::max(ScaleY(1), 1);  // use floor
             if (ch.enclosure_style & EnclosureStyle::kEnclosureStyleTop) {
-                canvas.ClearRect(ch.text_color,
+                canvas.ClearRect(enclosure_color,
                                  Rect(section_rect.left,
                                       section_rect.top,
                                       section_rect.right,
                                       section_rect.top + h));
             }
             if (ch.enclosure_style & EnclosureStyle::kEnclosureStyleBottom) {
-                canvas.ClearRect(ch.text_color,
+                canvas.ClearRect(enclosure_color,
                                  Rect(section_rect.left,
                                       section_rect.bottom - h,
                                       section_rect.right,
                                       section_rect.bottom));
             }
             if (ch.enclosure_style & EnclosureStyle::kEnclosureStyleLeft) {
-                canvas.ClearRect(ch.text_color,
+                canvas.ClearRect(enclosure_color,
                                  Rect(section_rect.left,
                                       section_rect.top,
                                       section_rect.left + w,
                                       section_rect.bottom));
             }
             if (ch.enclosure_style & EnclosureStyle::kEnclosureStyleRight) {
-                canvas.ClearRect(ch.text_color,
+                canvas.ClearRect(enclosure_color,
                                  Rect(section_rect.right - w,
                                       section_rect.top,
                                       section_rect.right,
