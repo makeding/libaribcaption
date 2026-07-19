@@ -21,6 +21,7 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 add_subdirectory(alphablend)
+add_subdirectory(b62)
 add_subdirectory(capi)
 add_subdirectory(caption2srt)
 add_subdirectory(png_writer)

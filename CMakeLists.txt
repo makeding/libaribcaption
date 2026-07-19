@@ -160,6 +160,7 @@ add_library(aribcaption
         include/aribcaption/aribcaption.h
         include/aribcaption/aribcaption.hpp
         include/aribcaption/aribcc_export.h
+        include/aribcaption/b62_decoder.hpp
         include/aribcaption/caption.h
         include/aribcaption/caption.hpp
         include/aribcaption/color.h
@@ -182,6 +183,8 @@ add_library(aribcaption
         src/base/scoped_cfref.hpp
         src/base/scoped_com_initializer.hpp
         src/base/scoped_holder.hpp
+        src/base/tinyxml2.cpp
+        src/base/tinyxml2.h
         src/base/unicode_helper.hpp
         src/base/utf_helper.hpp
         src/base/wchar_helper.hpp
@@ -198,6 +201,9 @@ add_library(aribcaption
         src/decoder/b24_drcs_conv.hpp
         src/decoder/b24_gaiji_table.hpp
         src/decoder/b24_macros.hpp
+        src/decoder/b62_decoder.cpp
+        src/decoder/b62_decoder_impl.cpp
+        src/decoder/b62_decoder_impl.hpp
         src/decoder/decoder.cpp
         src/decoder/decoder_capi.cpp
         src/decoder/decoder_impl.cpp
@@ -211,8 +217,6 @@ if(NOT ARIBCC_NO_RENDERER)
         include/aribcaption/image.hpp
         include/aribcaption/renderer.h
         include/aribcaption/renderer.hpp
-        $<$<BOOL:${ARIBCC_IS_ANDROID}>:src/base/tinyxml2.cpp>
-        $<$<BOOL:${ARIBCC_IS_ANDROID}>:src/base/tinyxml2.h>
         src/renderer/alphablend.hpp
         src/renderer/alphablend_generic.hpp
         src/renderer/alphablend_x86.hpp

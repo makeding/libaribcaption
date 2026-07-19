@@ -25,6 +25,7 @@
 #include "color.hpp"
 #include "caption.hpp"
 #include "decoder.hpp"
+#include "b62_decoder.hpp"
 
 #ifndef ARIBCC_NO_RENDERER
 #include "image.hpp"
