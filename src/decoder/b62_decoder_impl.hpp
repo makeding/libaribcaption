@@ -22,10 +22,12 @@ public:
     explicit B62DecoderImpl(Context& context);
     ~B62DecoderImpl();
 
+    void SetFontScale(float scale);
     B62DecodeStatus Decode(const uint8_t* ttml_data, size_t length, int64_t base_pts, B62DecodeResult& out_result);
 
 private:
     std::shared_ptr<Logger> log_;
+    float font_scale_ = 1.0f;
 };
 
 }  // namespace aribcaption::internal

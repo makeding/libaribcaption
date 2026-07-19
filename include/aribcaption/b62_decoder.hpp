@@ -51,6 +51,14 @@ public:
 
 public:
     /**
+     * Scale TTML font metrics while preserving the document coordinate plane.
+     * The default value is 1.0. This is intended for receiver-side subtitle
+     * size preferences rather than document conformance.
+     */
+    ARIBCC_API void SetFontScale(float scale);
+
+public:
+    /**
      * Decode a UTF-8 ARIB-TTML document.
      *
      * If base_pts is specified, the earliest explicitly timed paragraph is

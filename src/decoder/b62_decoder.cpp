@@ -19,6 +19,10 @@ B62Decoder::B62Decoder(B62Decoder&&) noexcept = default;
 
 B62Decoder& B62Decoder::operator=(B62Decoder&&) noexcept = default;
 
+void B62Decoder::SetFontScale(float scale) {
+    pimpl_->SetFontScale(scale);
+}
+
 B62DecodeStatus B62Decoder::Decode(const uint8_t* ttml_data,
                                    size_t length,
                                    int64_t base_pts,

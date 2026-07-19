@@ -107,5 +107,12 @@ int main() {
     assert(chars.size() == 7);
     assert(chars[1].y > chars[0].y);
 
+    decoder.SetFontScale(1.25f);
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kBasicTTML), std::strlen(kBasicTTML), 10000, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].regions[0].chars[0].char_width == 120);
+    assert(result.captions[0].regions[0].chars[0].char_height == 180);
+    assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 20);
+
     return 0;
 }

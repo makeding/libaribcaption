@@ -472,16 +472,26 @@ void ResolveRuby(std::vector<InlineSpan>& spans) {
     spans = std::move(resolved);
 }
 
-int StyleLength(const Style& style, const char* key, int base, int fallback) {
+int ScaledStyleLength(const Style& style, const char* key, int base, int fallback, float scale) {
     auto it = style.find(key);
     if (it == style.end()) {
         return fallback;
     }
     auto value = ParseLength(it->second, base);
-    return value ? std::max(1, static_cast<int>(std::lround(*value))) : fallback;
+    return value ? std::max(1, static_cast<int>(std::lround(*value * scale))) : fallback;
 }
 
-FontSize StyleFontSize(const Style& style, const std::array<int, 2>& plane, FontSize fallback) {
+FontSize ScaleFontSize(FontSize size, float scale) {
+    return {
+        std::max(1, static_cast<int>(std::lround(size.width * scale))),
+        std::max(1, static_cast<int>(std::lround(size.height * scale))),
+    };
+}
+
+FontSize StyleFontSize(const Style& style,
+                       const std::array<int, 2>& plane,
+                       FontSize fallback,
+                       float scale) {
     auto it = style.find("fontSize");
     if (it == style.end()) {
         return fallback;
@@ -490,10 +500,10 @@ FontSize StyleFontSize(const Style& style, const std::array<int, 2>& plane, Font
     if (!value) {
         return fallback;
     }
-    return {
+    return ScaleFontSize({
         std::max(1, (*value)[0]),
         std::max(1, (*value)[1]),
-    };
+    }, scale);
 }
 
 std::string StyleValue(const Style& style, const char* key, const char* fallback = "") {
@@ -657,6 +667,7 @@ std::vector<uint32_t> DecodeUTF8(std::string_view text) {
 void AppendRubyRegion(const InlineSpan& span,
                       const BoundingBox& base,
                       const std::array<int, 2>& plane,
+                      float font_scale,
                       std::vector<CaptionRegion>& regions) {
     if (span.ruby_text.empty() || !base.IsValid()) {
         return;
@@ -665,7 +676,7 @@ void AppendRubyRegion(const InlineSpan& span,
     if (codepoints.empty()) {
         return;
     }
-    FontSize base_font_size = StyleFontSize(span.style, plane, {72, 72});
+    FontSize base_font_size = StyleFontSize(span.style, plane, ScaleFontSize({72, 72}, font_scale), font_scale);
     FontSize font_size = {
         std::max(1, base_font_size.width / 2),
         std::max(1, base_font_size.height / 2),
@@ -693,19 +704,22 @@ void AppendRubyRegion(const InlineSpan& span,
 void LayoutHorizontal(const std::vector<InlineSpan>& spans,
                       const RegionDefinition& definition,
                       const std::array<int, 2>& plane,
+                      float font_scale,
                       Caption& caption) {
     std::vector<std::vector<CharacterPlacement>> lines(1);
-    FontSize default_font_size = StyleFontSize(definition.style, plane, {72, 72});
-    int line_height = StyleLength(definition.style, "lineHeight", plane[1],
-                                  std::max(default_font_size.height, default_font_size.height * 5 / 4));
+    FontSize default_font_size =
+        StyleFontSize(definition.style, plane, ScaleFontSize({72, 72}, font_scale), font_scale);
+    int line_height = ScaledStyleLength(definition.style, "lineHeight", plane[1],
+                                        std::max(default_font_size.height, default_font_size.height * 5 / 4),
+                                        font_scale);
 
     for (const InlineSpan& span : spans) {
-        FontSize font_size = StyleFontSize(span.style, plane, default_font_size);
-        int letter_spacing = StyleLength(span.style, "letterSpacing", definition.width, 0);
+        FontSize font_size = StyleFontSize(span.style, plane, default_font_size, font_scale);
+        int letter_spacing = ScaledStyleLength(span.style, "letterSpacing", definition.width, 0, font_scale);
         line_height = std::max(
             line_height,
-            StyleLength(span.style, "lineHeight", plane[1],
-                        std::max(font_size.height, font_size.height * 5 / 4)));
+            ScaledStyleLength(span.style, "lineHeight", plane[1],
+                              std::max(font_size.height, font_size.height * 5 / 4), font_scale));
         for (uint32_t codepoint : DecodeUTF8(span.text)) {
             if (codepoint == '\n') {
                 lines.emplace_back();
@@ -747,8 +761,8 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
         }
         for (const CharacterPlacement& placement : line) {
             const Style& style = placement.span->style;
-            FontSize font_size = StyleFontSize(style, plane, default_font_size);
-            int letter_spacing = StyleLength(style, "letterSpacing", definition.width, 0);
+            FontSize font_size = StyleFontSize(style, plane, default_font_size, font_scale);
+            int letter_spacing = ScaledStyleLength(style, "letterSpacing", definition.width, 0, font_scale);
             bool halfwidth = unicode::IsHalfwidthCharacter(placement.codepoint);
             CaptionChar character = MakeCaptionChar(placement.codepoint, style, x, y, font_size.width,
                                                      font_size.height, line_height, letter_spacing, halfwidth);
@@ -766,7 +780,7 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
     for (const InlineSpan& span : spans) {
         auto bounds = span_bounds.find(&span);
         if (bounds != span_bounds.end()) {
-            AppendRubyRegion(span, bounds->second, plane, caption.regions);
+            AppendRubyRegion(span, bounds->second, plane, font_scale, caption.regions);
         }
     }
 }
@@ -774,14 +788,17 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
 void LayoutVertical(const std::vector<InlineSpan>& spans,
                     const RegionDefinition& definition,
                     const std::array<int, 2>& plane,
+                    float font_scale,
                     Caption& caption) {
     std::vector<std::vector<CharacterPlacement>> columns(1);
-    FontSize default_font_size = StyleFontSize(definition.style, plane, {72, 72});
-    int column_width = StyleLength(definition.style, "lineHeight", plane[0],
-                                   std::max(default_font_size.width, default_font_size.width * 5 / 4));
+    FontSize default_font_size =
+        StyleFontSize(definition.style, plane, ScaleFontSize({72, 72}, font_scale), font_scale);
+    int column_width = ScaledStyleLength(definition.style, "lineHeight", plane[0],
+                                         std::max(default_font_size.width, default_font_size.width * 5 / 4),
+                                         font_scale);
     for (const InlineSpan& span : spans) {
-        FontSize font_size = StyleFontSize(span.style, plane, default_font_size);
-        int letter_spacing = StyleLength(span.style, "letterSpacing", definition.height, 0);
+        FontSize font_size = StyleFontSize(span.style, plane, default_font_size, font_scale);
+        int letter_spacing = ScaledStyleLength(span.style, "letterSpacing", definition.height, 0, font_scale);
         for (uint32_t codepoint : DecodeUTF8(span.text)) {
             if (codepoint == '\n') {
                 columns.emplace_back();
@@ -812,8 +829,9 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
             y += std::max(0, definition.height - column_height);
         }
         for (const CharacterPlacement& placement : column) {
-            FontSize font_size = StyleFontSize(placement.span->style, plane, default_font_size);
-            int letter_spacing = StyleLength(placement.span->style, "letterSpacing", definition.height, 0);
+            FontSize font_size = StyleFontSize(placement.span->style, plane, default_font_size, font_scale);
+            int letter_spacing =
+                ScaledStyleLength(placement.span->style, "letterSpacing", definition.height, 0, font_scale);
             CaptionChar character = MakeCaptionChar(placement.codepoint, placement.span->style,
                                                     x, y, font_size.width, font_size.height,
                                                     font_size.height + letter_spacing, 0, false);
@@ -885,6 +903,12 @@ const tinyxml2::XMLElement* FindNearestTimedNode(const tinyxml2::XMLElement* ele
 B62DecoderImpl::B62DecoderImpl(Context& context) : log_(GetContextLogger(context)) {}
 
 B62DecoderImpl::~B62DecoderImpl() = default;
+
+void B62DecoderImpl::SetFontScale(float scale) {
+    if (std::isfinite(scale) && scale > 0.0f) {
+        font_scale_ = scale;
+    }
+}
 
 B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
                                        size_t length,
@@ -1034,9 +1058,9 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
 
         std::string writing_mode = StyleValue(definition.style, "writingMode");
         if (writing_mode == "tbrl" || writing_mode == "tb-rl" || writing_mode == "tblr" || writing_mode == "tb-lr") {
-            LayoutVertical(spans, definition, plane, caption);
+            LayoutVertical(spans, definition, plane, font_scale_, caption);
         } else {
-            LayoutHorizontal(spans, definition, plane, caption);
+            LayoutHorizontal(spans, definition, plane, font_scale_, caption);
         }
         if (!caption.regions.empty()) {
             out_result.captions.push_back(std::move(caption));
