@@ -23,11 +23,22 @@ void B62Decoder::SetFontScale(float scale) {
     pimpl_->SetFontScale(scale);
 }
 
+void B62Decoder::Reset() {
+    pimpl_->Reset();
+}
+
 B62DecodeStatus B62Decoder::Decode(const uint8_t* ttml_data,
                                    size_t length,
                                    int64_t base_pts,
                                    B62DecodeResult& out_result) {
     return pimpl_->Decode(ttml_data, length, base_pts, out_result);
+}
+
+B62DecodeStatus B62Decoder::Decode(const uint8_t* ttml_data,
+                                   size_t length,
+                                   const B62DecodeOptions& options,
+                                   B62DecodeResult& out_result) {
+    return pimpl_->Decode(ttml_data, length, options, out_result);
 }
 
 }  // namespace aribcaption

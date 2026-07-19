@@ -76,6 +76,23 @@ constexpr char kOverlongCenteredTTML[] = R"TTML(<?xml version="1.0" encoding="UT
   <body><div><p region="narrow" style="base">中央寄せ</p></div></body>
 </tt>)TTML";
 
+constexpr char kOverlappingTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div>
+    <p begin="0s" end="10s">first</p>
+    <p begin="5s" end="8s">second</p>
+  </div></body>
+</tt>)TTML";
+
+constexpr char kLiveFirstTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p xml:id="p4" begin="0s" end="indefinite">continued</p></div></body>
+</tt>)TTML";
+
+constexpr char kLiveSecondTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p xml:id="p4" begin="indefinite" end="10s">ignored replacement</p></div></body>
+</tt>)TTML";
+
+constexpr char kEmptyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"></tt>)TTML";
+
 }  // namespace
 
 int main() {
@@ -85,11 +102,13 @@ int main() {
 
     auto status = decoder.Decode(reinterpret_cast<const uint8_t*>(kBasicTTML), std::strlen(kBasicTTML), 10000, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
-    assert(result.captions.size() == 2);
+    assert(result.captions.size() == 4);
     assert(result.captions[0].pts == 10000);
     assert(result.captions[0].wait_duration == 4600);
-    assert(result.captions[1].pts == 14800);
-    assert(result.captions[1].wait_duration == 4500);
+    assert(result.captions[1].pts == 14600);
+    assert(result.captions[1].regions.empty());
+    assert(result.captions[2].pts == 14800);
+    assert(result.captions[2].wait_duration == 4500);
     assert(result.captions[0].plane_width == 3840);
     assert(result.captions[0].plane_height == 2160);
     assert(result.captions[0].text == "仁和寺　京都市右京区");
@@ -133,6 +152,41 @@ int main() {
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
     assert(result.captions[0].regions[0].x < 1000);
     assert(result.captions[0].regions[0].width > 200);
+
+    aribcaption::B62DecodeOptions options;
+    options.document_pts = 1000;
+    options.time_base_pts = 1000;
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kOverlappingTTML),
+                            std::strlen(kOverlappingTTML), options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 4);
+    assert(result.captions[0].pts == 1000 && result.captions[0].regions.size() == 1);
+    assert(result.captions[1].pts == 6000 && result.captions[1].regions.size() == 2);
+    assert(result.captions[2].pts == 9000 && result.captions[2].regions.size() == 1);
+    assert(result.captions[3].pts == 11000 && result.captions[3].regions.empty());
+
+    options.operation_mode = aribcaption::B62OperationMode::kLive;
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kLiveFirstTTML),
+                            std::strlen(kLiveFirstTTML), options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 1);
+    assert(result.captions[0].text == "continued");
+    assert(result.captions[0].wait_duration == aribcaption::DURATION_INDEFINITE);
+
+    options.document_pts = 6000;
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kLiveSecondTTML),
+                            std::strlen(kLiveSecondTTML), options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 2);
+    assert(result.captions[0].pts == 1000);
+    assert(result.captions[0].wait_duration == 10000);
+    assert(result.captions[0].text == "continued");
+    assert(result.captions[1].pts == 11000 && result.captions[1].regions.empty());
+
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kEmptyTTML),
+                            std::strlen(kEmptyTTML), options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 1 && result.captions[0].regions.empty());
 
     return 0;
 }

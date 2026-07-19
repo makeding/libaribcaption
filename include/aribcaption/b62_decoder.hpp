@@ -31,6 +31,23 @@ enum class B62DecodeStatus {
     kGotCaption = 2,
 };
 
+enum class B62OperationMode {
+    kLive = 0,
+    kSegment = 1,
+    kProgram = 2,
+};
+
+struct B62DecodeOptions {
+    // Presentation time of the TTML document's MPU on the media timeline.
+    int64_t document_pts = PTS_NOPTS;
+    // Media-timeline position corresponding to TTML time zero.
+    int64_t time_base_pts = PTS_NOPTS;
+    B62OperationMode operation_mode = B62OperationMode::kSegment;
+    bool align_earliest_to_document_pts = false;
+    bool ignore_document_timing = false;
+    bool discontinuity = false;
+};
+
 struct B62DecodeResult {
     std::vector<Caption> captions;
 };
@@ -56,6 +73,7 @@ public:
      * size preferences rather than document conformance.
      */
     ARIBCC_API void SetFontScale(float scale);
+    ARIBCC_API void Reset();
 
 public:
     /**
@@ -67,6 +85,11 @@ public:
     ARIBCC_API B62DecodeStatus Decode(const uint8_t* ttml_data,
                                       size_t length,
                                       int64_t base_pts,
+                                      B62DecodeResult& out_result);
+
+    ARIBCC_API B62DecodeStatus Decode(const uint8_t* ttml_data,
+                                      size_t length,
+                                      const B62DecodeOptions& options,
                                       B62DecodeResult& out_result);
 
 public:

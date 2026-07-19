@@ -51,8 +51,10 @@ struct InlineSpan {
 
 struct RawCue {
     const tinyxml2::XMLElement* node = nullptr;
+    std::string id;
     std::optional<int64_t> start;
     std::optional<int64_t> end;
+    bool indefinite_start = false;
     bool indefinite = false;
 };
 
@@ -940,9 +942,23 @@ void B62DecoderImpl::SetFontScale(float scale) {
     }
 }
 
+void B62DecoderImpl::Reset() {
+    live_nodes_.clear();
+}
+
 B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
                                        size_t length,
                                        int64_t base_pts,
+                                       B62DecodeResult& out_result) {
+    B62DecodeOptions options;
+    options.document_pts = base_pts;
+    options.align_earliest_to_document_pts = true;
+    return Decode(ttml_data, length, options, out_result);
+}
+
+B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
+                                       size_t length,
+                                       const B62DecodeOptions& options,
                                        B62DecodeResult& out_result) {
     out_result.captions.clear();
     if (!ttml_data || length == 0) {
@@ -958,9 +974,20 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         return B62DecodeStatus::kError;
     }
     const tinyxml2::XMLElement* body = FirstChild(tt, "body");
+
+    const auto emit_clear = [&]() {
+        Reset();
+        Caption clear;
+        clear.flags = kCaptionFlagsClearScreen;
+        clear.pts = options.document_pts;
+        clear.wait_duration = DURATION_INDEFINITE;
+        clear.plane_width = 3840;
+        clear.plane_height = 2160;
+        out_result.captions.push_back(std::move(clear));
+        return B62DecodeStatus::kGotCaption;
+    };
     if (!body) {
-        log_->e("B62DecoderImpl: TTML document does not contain a body");
-        return B62DecodeStatus::kError;
+        return emit_clear();
     }
 
     std::array<int, 2> plane{3840, 2160};
@@ -1011,10 +1038,13 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     for (const tinyxml2::XMLElement* paragraph : paragraphs) {
         RawCue cue;
         cue.node = paragraph;
+        if (const char* id = FindAttribute(paragraph, "id")) {
+            cue.id = id;
+        }
         const tinyxml2::XMLElement* timing_node = FindNearestTimedNode(paragraph);
-        cue.start = ParseTime(FindAttribute(paragraph, "begin"));
-        if (!cue.start && timing_node) {
-            cue.start = ParseTime(FindAttribute(timing_node, "begin"));
+        cue.start = ParseTime(FindAttribute(paragraph, "begin"), &cue.indefinite_start);
+        if (!cue.start && !cue.indefinite_start && timing_node) {
+            cue.start = ParseTime(FindAttribute(timing_node, "begin"), &cue.indefinite_start);
         }
         bool indefinite_end = false;
         cue.end = ParseTime(FindAttribute(paragraph, "end"), &indefinite_end);
@@ -1036,16 +1066,50 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         raw_cues.push_back(cue);
     }
     if (raw_cues.empty()) {
-        return B62DecodeStatus::kNoCaption;
+        return emit_clear();
     }
 
     int64_t timeline_offset = 0;
-    if (base_pts != PTS_NOPTS && minimum_start && std::llabs(base_pts - *minimum_start) > 50) {
-        timeline_offset = base_pts - *minimum_start;
+    if (options.time_base_pts != PTS_NOPTS) {
+        timeline_offset = options.time_base_pts;
+    } else if (options.align_earliest_to_document_pts &&
+               options.document_pts != PTS_NOPTS && minimum_start) {
+        timeline_offset = options.document_pts - *minimum_start;
     }
     uint32_t language = ParseLanguage(FindAttribute(tt, "lang"));
 
+    const bool continue_live_document =
+        options.operation_mode == B62OperationMode::kLive && !options.discontinuity &&
+        std::any_of(live_nodes_.begin(), live_nodes_.end(), [](const PresentationNode& node) {
+            return node.indefinite;
+        });
+    if (!continue_live_document) {
+        live_nodes_.clear();
+    }
+
+    if (options.operation_mode == B62OperationMode::kLive) {
+        for (const RawCue& raw : raw_cues) {
+            if (!raw.indefinite_start || raw.id.empty()) continue;
+            auto previous = std::find_if(live_nodes_.begin(), live_nodes_.end(), [&](const PresentationNode& node) {
+                return node.id == raw.id && node.indefinite;
+            });
+            if (previous == live_nodes_.end()) continue;
+            if (raw.end) {
+                previous->end = *raw.end + timeline_offset;
+                previous->indefinite = false;
+            } else if (!raw.indefinite) {
+                previous->end = previous->start + 5000;
+                previous->indefinite = false;
+            }
+        }
+    }
+
+    std::vector<PresentationNode> document_nodes;
+
     for (const RawCue& raw : raw_cues) {
+        if (raw.indefinite_start) {
+            continue;
+        }
         RegionDefinition definition;
         definition.x = plane[0] / 10;
         definition.y = plane[1] * 78 / 100;
@@ -1071,17 +1135,9 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         caption.iso6392_language_code = language;
         caption.plane_width = plane[0];
         caption.plane_height = plane[1];
-        caption.pts = raw.start ? *raw.start + timeline_offset : base_pts;
-        if (raw.indefinite) {
-            caption.wait_duration = DURATION_INDEFINITE;
-        } else {
-            int64_t end = raw.end ? *raw.end + timeline_offset : (caption.pts == PTS_NOPTS ? 5000 : caption.pts + 5000);
-            if (caption.pts != PTS_NOPTS && end <= caption.pts) {
-                end = caption.pts + 50;
-            }
-            caption.wait_duration = caption.pts == PTS_NOPTS ? 5000 : end - caption.pts;
-            caption.flags = static_cast<CaptionFlags>(caption.flags | kCaptionFlagsWaitDuration);
-        }
+        caption.pts = options.ignore_document_timing
+            ? options.document_pts
+            : (raw.start ? *raw.start + timeline_offset : options.document_pts);
         for (const InlineSpan& span : spans) {
             caption.text += span.text;
         }
@@ -1093,8 +1149,69 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
             LayoutHorizontal(spans, definition, plane, font_scale_, caption);
         }
         if (!caption.regions.empty()) {
-            out_result.captions.push_back(std::move(caption));
+            PresentationNode node;
+            node.id = raw.id;
+            node.start = caption.pts;
+            node.indefinite = options.ignore_document_timing || raw.indefinite;
+            if (!node.indefinite) {
+                int64_t end = raw.end ? *raw.end + timeline_offset
+                                      : (node.start == PTS_NOPTS ? 5000 : node.start + 5000);
+                if (node.start != PTS_NOPTS && end <= node.start) {
+                    end = node.start + 50;
+                }
+                node.end = end;
+            }
+            node.caption = std::move(caption);
+            document_nodes.push_back(std::move(node));
         }
+    }
+
+    std::vector<PresentationNode>* nodes = &document_nodes;
+    if (options.operation_mode == B62OperationMode::kLive) {
+        live_nodes_.insert(live_nodes_.end(),
+                           std::make_move_iterator(document_nodes.begin()),
+                           std::make_move_iterator(document_nodes.end()));
+        if (options.document_pts != PTS_NOPTS) {
+            live_nodes_.erase(
+                std::remove_if(live_nodes_.begin(), live_nodes_.end(), [&](const PresentationNode& node) {
+                    return node.end && *node.end <= options.document_pts;
+                }),
+                live_nodes_.end());
+        }
+        nodes = &live_nodes_;
+    }
+    if (nodes->empty()) {
+        return emit_clear();
+    }
+
+    std::vector<int64_t> boundaries;
+    for (const PresentationNode& node : *nodes) {
+        if (node.start != PTS_NOPTS) boundaries.push_back(node.start);
+        if (node.end) boundaries.push_back(*node.end);
+    }
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+
+    for (size_t index = 0; index < boundaries.size(); ++index) {
+        const int64_t pts = boundaries[index];
+        Caption scene;
+        scene.flags = kCaptionFlagsClearScreen;
+        scene.pts = pts;
+        scene.plane_width = plane[0];
+        scene.plane_height = plane[1];
+        scene.iso6392_language_code = language;
+        for (const PresentationNode& node : *nodes) {
+            if (node.start > pts || (node.end && pts >= *node.end)) continue;
+            scene.text += node.caption.text;
+            scene.regions.insert(scene.regions.end(), node.caption.regions.begin(), node.caption.regions.end());
+        }
+        if (index + 1 < boundaries.size()) {
+            scene.wait_duration = boundaries[index + 1] - pts;
+            scene.flags = static_cast<CaptionFlags>(scene.flags | kCaptionFlagsWaitDuration);
+        } else {
+            scene.wait_duration = DURATION_INDEFINITE;
+        }
+        out_result.captions.push_back(std::move(scene));
     }
 
     return out_result.captions.empty() ? B62DecodeStatus::kNoCaption : B62DecodeStatus::kGotCaption;
