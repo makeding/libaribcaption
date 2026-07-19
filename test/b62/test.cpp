@@ -23,7 +23,7 @@ constexpr char kBasicTTML[] = R"TTML(<?xml version="1.0" encoding="UTF-8"?>
     ttp:extent="3840px 2160px" xml:lang="ja">
   <head>
     <styling>
-      <style xml:id="base" tts:fontSize="120px" tts:lineHeight="150px"
+      <style xml:id="base" tts:fontSize="96px 144px" tts:lineHeight="160px"
              tts:color="white" tts:textAlign="center" arib-tt:border="solid 3px black"/>
       <style xml:id="animated" style="base"/>
     </styling>
@@ -87,6 +87,8 @@ int main() {
     assert(result.captions[0].regions[0].y == 1480);
     assert(result.captions[0].regions[0].width == 3360);
     assert(result.captions[0].regions[0].height == 420);
+    assert(result.captions[0].regions[0].chars[0].char_width == 96);
+    assert(result.captions[0].regions[0].chars[0].char_height == 144);
     assert(result.captions[0].regions[1].is_ruby);
 
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kVerticalTTML), std::strlen(kVerticalTTML), 20000, result);
