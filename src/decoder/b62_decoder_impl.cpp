@@ -653,6 +653,7 @@ CaptionChar MakeCaptionChar(uint32_t codepoint,
     BorderPaint enclosure = MakeEnclosurePaint(style);
     if (enclosure.visible && !(character.style & kCharStyleStroke)) {
         character.stroke_color = enclosure.color;
+        character.style = static_cast<CharStyle>(character.style | kCharStyleColoredEnclosure);
     }
     utf::UTF8AppendCodePoint(character.u8str, codepoint);
     return character;
@@ -943,7 +944,7 @@ void B62DecoderImpl::SetFontScale(float scale) {
 }
 
 void B62DecoderImpl::Reset() {
-    live_nodes_.clear();
+    presentation_state_.Reset();
 }
 
 B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
@@ -1078,33 +1079,24 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     }
     uint32_t language = ParseLanguage(FindAttribute(tt, "lang"));
 
-    const bool continue_live_document =
-        options.operation_mode == B62OperationMode::kLive && !options.discontinuity &&
-        std::any_of(live_nodes_.begin(), live_nodes_.end(), [](const PresentationNode& node) {
-            return node.indefinite;
-        });
-    if (!continue_live_document) {
-        live_nodes_.clear();
+    if (options.operation_mode != B62OperationMode::kLive || options.discontinuity) {
+        presentation_state_.Reset();
     }
 
+    bool continuation_applied = false;
     if (options.operation_mode == B62OperationMode::kLive) {
         for (const RawCue& raw : raw_cues) {
             if (!raw.indefinite_start || raw.id.empty()) continue;
-            auto previous = std::find_if(live_nodes_.begin(), live_nodes_.end(), [&](const PresentationNode& node) {
-                return node.id == raw.id && node.indefinite;
-            });
-            if (previous == live_nodes_.end()) continue;
+            std::optional<int64_t> end;
             if (raw.end) {
-                previous->end = *raw.end + timeline_offset;
-                previous->indefinite = false;
-            } else if (!raw.indefinite) {
-                previous->end = previous->start + 5000;
-                previous->indefinite = false;
+                end = *raw.end + timeline_offset;
             }
+            continuation_applied = presentation_state_.ApplyContinuation(
+                raw.id, end, !raw.indefinite) || continuation_applied;
         }
     }
 
-    std::vector<PresentationNode> document_nodes;
+    std::vector<B62PresentationNode> document_nodes;
 
     for (const RawCue& raw : raw_cues) {
         if (raw.indefinite_start) {
@@ -1149,7 +1141,7 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
             LayoutHorizontal(spans, definition, plane, font_scale_, caption);
         }
         if (!caption.regions.empty()) {
-            PresentationNode node;
+            B62PresentationNode node;
             node.id = raw.id;
             node.start = caption.pts;
             node.indefinite = options.ignore_document_timing || raw.indefinite;
@@ -1166,61 +1158,30 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         }
     }
 
-    std::vector<PresentationNode>* nodes = &document_nodes;
-    if (options.operation_mode == B62OperationMode::kLive) {
-        live_nodes_.insert(live_nodes_.end(),
-                           std::make_move_iterator(document_nodes.begin()),
-                           std::make_move_iterator(document_nodes.end()));
-        if (options.document_pts != PTS_NOPTS) {
-            live_nodes_.erase(
-                std::remove_if(live_nodes_.begin(), live_nodes_.end(), [&](const PresentationNode& node) {
-                    return node.end && *node.end <= options.document_pts;
-                }),
-                live_nodes_.end());
-        }
-        nodes = &live_nodes_;
-    }
-    if (nodes->empty()) {
-        return emit_clear();
-    }
-
-    std::vector<int64_t> boundaries;
-    for (const PresentationNode& node : *nodes) {
-        if (node.start != PTS_NOPTS) boundaries.push_back(node.start);
-        if (node.end) boundaries.push_back(*node.end);
-    }
-    std::sort(boundaries.begin(), boundaries.end());
-    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
-
-    size_t first_boundary = 0;
-    if (options.document_pts != PTS_NOPTS) {
-        const auto after_current = std::upper_bound(boundaries.begin(), boundaries.end(), options.document_pts);
-        if (after_current != boundaries.begin()) {
-            first_boundary = static_cast<size_t>(std::distance(boundaries.begin(), after_current) - 1);
-        }
-    }
     constexpr size_t kMaxPresentationEvents = 300;
-    const size_t last_boundary = std::min(boundaries.size(), first_boundary + kMaxPresentationEvents);
-    for (size_t index = first_boundary; index < last_boundary; ++index) {
-        const int64_t pts = boundaries[index];
-        Caption scene;
-        scene.flags = kCaptionFlagsClearScreen;
-        scene.pts = pts;
-        scene.plane_width = plane[0];
-        scene.plane_height = plane[1];
-        scene.iso6392_language_code = language;
-        for (const PresentationNode& node : *nodes) {
-            if (node.start > pts || (node.end && pts >= *node.end)) continue;
-            scene.text += node.caption.text;
-            scene.regions.insert(scene.regions.end(), node.caption.regions.begin(), node.caption.regions.end());
+    B62Presentation presentation;
+    presentation.plane_width = plane[0];
+    presentation.plane_height = plane[1];
+    presentation.language = language;
+    presentation.nodes = std::move(document_nodes);
+
+    if (options.operation_mode == B62OperationMode::kLive) {
+        if (!presentation.nodes.empty()) {
+            presentation_state_.Commit(std::move(presentation));
+        } else if (!continuation_applied) {
+            return emit_clear();
         }
-        if (index + 1 < boundaries.size()) {
-            scene.wait_duration = boundaries[index + 1] - pts;
-            scene.flags = static_cast<CaptionFlags>(scene.flags | kCaptionFlagsWaitDuration);
-        } else {
-            scene.wait_duration = DURATION_INDEFINITE;
+        presentation_state_.Prune(options.document_pts);
+        presentation_state_.BuildScenes(
+            options.document_pts, kMaxPresentationEvents, out_result.captions);
+    } else {
+        if (presentation.nodes.empty()) {
+            return emit_clear();
         }
-        out_result.captions.push_back(std::move(scene));
+        B62PresentationState document_state;
+        document_state.Commit(std::move(presentation));
+        document_state.BuildScenes(
+            options.document_pts, kMaxPresentationEvents, out_result.captions);
     }
 
     return out_result.captions.empty() ? B62DecodeStatus::kNoCaption : B62DecodeStatus::kGotCaption;

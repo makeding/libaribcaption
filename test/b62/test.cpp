@@ -91,6 +91,22 @@ constexpr char kLiveSecondTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" 
   <body><div><p xml:id="p4" begin="indefinite" end="10s">ignored replacement</p></div></body>
 </tt>)TTML";
 
+constexpr char kLiveBarrierOldTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p begin="0s" end="10s">old presentation</p></div></body>
+</tt>)TTML";
+
+constexpr char kLiveBarrierNewTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p begin="2s" end="4s">new presentation</p></div></body>
+</tt>)TTML";
+
+constexpr char kPartialTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p begin="0s" end="5s">partial</p></div></body>
+</tt>)TTML";
+
+constexpr char kCompleteTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p begin="0s" end="5s">complete</p></div></body>
+</tt>)TTML";
+
 constexpr char kEmptyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"></tt>)TTML";
 
 }  // namespace
@@ -123,6 +139,7 @@ int main() {
     assert(result.captions[0].regions[0].chars[0].char_height == 144);
     assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 16);
     assert(!(result.captions[0].regions[0].chars[0].style & aribcaption::kCharStyleStroke));
+    assert(result.captions[0].regions[0].chars[0].style & aribcaption::kCharStyleColoredEnclosure);
     assert(result.captions[0].regions[0].chars[0].enclosure_style ==
            (aribcaption::kEnclosureStyleTop | aribcaption::kEnclosureStyleBottom |
             aribcaption::kEnclosureStyleLeft | aribcaption::kEnclosureStyleRight));
@@ -187,6 +204,49 @@ int main() {
                             std::strlen(kEmptyTTML), options, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
     assert(result.captions.size() == 1 && result.captions[0].regions.empty());
+
+    aribcaption::B62Decoder presentation_decoder(context);
+    aribcaption::B62DecodeOptions live_options;
+    live_options.operation_mode = aribcaption::B62OperationMode::kLive;
+    live_options.document_pts = 1000;
+    live_options.time_base_pts = 1000;
+    status = presentation_decoder.Decode(
+        reinterpret_cast<const uint8_t*>(kLiveBarrierOldTTML),
+        std::strlen(kLiveBarrierOldTTML), live_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].text == "old presentation");
+
+    live_options.document_pts = 3000;
+    status = presentation_decoder.Decode(
+        reinterpret_cast<const uint8_t*>(kLiveBarrierNewTTML),
+        std::strlen(kLiveBarrierNewTTML), live_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 2);
+    assert(result.captions[0].pts == 3000 && result.captions[0].text == "new presentation");
+    assert(result.captions[1].pts == 5000 && result.captions[1].regions.empty());
+
+    presentation_decoder.Reset();
+    live_options.document_pts = 1000;
+    status = presentation_decoder.Decode(
+        reinterpret_cast<const uint8_t*>(kPartialTTML),
+        std::strlen(kPartialTTML), live_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    status = presentation_decoder.Decode(
+        reinterpret_cast<const uint8_t*>(kCompleteTTML),
+        std::strlen(kCompleteTTML), live_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].text == "complete");
+
+    live_options.document_pts = 3000;
+    live_options.discontinuity = true;
+    status = presentation_decoder.Decode(
+        reinterpret_cast<const uint8_t*>(kLiveBarrierNewTTML),
+        std::strlen(kLiveBarrierNewTTML), live_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].text == "new presentation");
+    for (const auto& caption : result.captions) {
+        assert(caption.text != "complete");
+    }
 
     return 0;
 }

@@ -60,7 +60,8 @@ typedef enum aribcc_charstyle_t {
     ARIBCC_CHARSTYLE_BOLD = 1u << 0,
     ARIBCC_CHARSTYLE_ITALIC = 1u << 1,
     ARIBCC_CHARSTYLE_UNDERLINE = 1u << 2,
-    ARIBCC_CHARSTYLE_STROKE = 1u << 3
+    ARIBCC_CHARSTYLE_STROKE = 1u << 3,
+    ARIBCC_CHARSTYLE_COLORED_ENCLOSURE = 1u << 4
 } aribcc_charstyle_t;
 
 /**

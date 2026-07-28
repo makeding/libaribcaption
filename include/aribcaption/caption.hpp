@@ -64,7 +64,10 @@ enum CharStyle {
     kCharStyleBold = 1u << 0,
     kCharStyleItalic = 1u << 1,
     kCharStyleUnderline = 1u << 2,
-    kCharStyleStroke = 1u << 3
+    kCharStyleStroke = 1u << 3,
+    // B62 extension: stroke_color carries the enclosure color when the
+    // character itself is not stroked. B24 never emits this flag.
+    kCharStyleColoredEnclosure = 1u << 4
 };
 
 /**

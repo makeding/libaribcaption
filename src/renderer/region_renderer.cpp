@@ -137,8 +137,9 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
 
         // Draw enclosure if needed
         if (ch.enclosure_style) {
-            ColorRGBA enclosure_color =
-                (!(ch.style & CharStyle::kCharStyleStroke) && ch.stroke_color.a != 0) ? ch.stroke_color : ch.text_color;
+            ColorRGBA enclosure_color = (ch.style & CharStyle::kCharStyleColoredEnclosure)
+                ? ch.stroke_color
+                : ch.text_color;
             int w = std::max(ScaleX(1), 1);  // use floor
             int h = std::max(ScaleY(1), 1);  // use floor
             if (ch.enclosure_style & EnclosureStyle::kEnclosureStyleTop) {

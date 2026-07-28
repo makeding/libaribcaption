@@ -160,6 +160,7 @@ add_library(aribcaption
         include/aribcaption/aribcaption.h
         include/aribcaption/aribcaption.hpp
         include/aribcaption/aribcc_export.h
+        include/aribcaption/b62_decoder.h
         include/aribcaption/b62_decoder.hpp
         include/aribcaption/caption.h
         include/aribcaption/caption.hpp
@@ -202,8 +203,11 @@ add_library(aribcaption
         src/decoder/b24_gaiji_table.hpp
         src/decoder/b24_macros.hpp
         src/decoder/b62_decoder.cpp
+        src/decoder/b62_decoder_capi.cpp
         src/decoder/b62_decoder_impl.cpp
         src/decoder/b62_decoder_impl.hpp
+        src/decoder/b62_presentation_state.cpp
+        src/decoder/b62_presentation_state.hpp
         src/decoder/decoder.cpp
         src/decoder/decoder_capi.cpp
         src/decoder/decoder_impl.cpp
