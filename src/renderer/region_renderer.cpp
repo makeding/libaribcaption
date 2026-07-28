@@ -19,6 +19,7 @@
 #include <cassert>
 #include "renderer/bitmap.hpp"
 #include "renderer/canvas.hpp"
+#include "renderer/enclosure_geometry.hpp"
 #include "renderer/region_renderer.hpp"
 
 namespace aribcaption {
@@ -119,7 +120,57 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
     Canvas canvas(bitmap);
     TextRenderContext text_render_ctx = text_renderer_->BeginDraw(bitmap);
 
-    for (const CaptionChar& ch : region.chars) {
+    constexpr unsigned kFullEnclosure =
+        kEnclosureStyleTop | kEnclosureStyleBottom |
+        kEnclosureStyleLeft | kEnclosureStyleRight;
+    std::vector<bool> merge_enclosure(char_count, false);
+    std::vector<ColoredEnclosureRect> enclosure_rects;
+    for (size_t index = 0; index < char_count; index++) {
+        const CaptionChar& ch = region.chars[index];
+        if (!(ch.style & CharStyle::kCharStyleColoredEnclosure) ||
+            static_cast<unsigned>(ch.enclosure_style) != kFullEnclosure) {
+            continue;
+        }
+        int section_x = ScaleX(ch.x) - ScaleX(region.x);
+        int section_y = ScaleY(ch.y) - ScaleY(region.y);
+        Rect section_rect(section_x,
+                          section_y,
+                          section_x + ScaleWidth(ch.section_width(), ch.x),
+                          section_y + ScaleHeight(ch.section_height(), ch.y));
+        if (section_rect.width() < 3 || section_rect.height() < 3) {
+            continue;
+        }
+        merge_enclosure[index] = true;
+        enclosure_rects.push_back({section_rect, ch.stroke_color});
+    }
+
+    // B62 maps a full arib-tt:border to a colored enclosure.  Paint all
+    // backgrounds first so the shared B24 bitmap renderer can then draw only
+    // the outer edge of the union without later cells erasing that edge.
+    if (!enclosure_rects.empty()) {
+        if (!force_no_background_) {
+            for (const CaptionChar& ch : region.chars) {
+                int section_x = ScaleX(ch.x) - ScaleX(region.x);
+                int section_y = ScaleY(ch.y) - ScaleY(region.y);
+                Rect section_rect(section_x,
+                                  section_y,
+                                  section_x + ScaleWidth(ch.section_width(), ch.x),
+                                  section_y + ScaleHeight(ch.section_height(), ch.y));
+                if (section_rect.width() >= 3 && section_rect.height() >= 3) {
+                    canvas.ClearRect(ch.back_color, section_rect);
+                }
+            }
+        }
+        int w = std::max(ScaleX(1), 1);  // use floor
+        int h = std::max(ScaleY(1), 1);  // use floor
+        for (const ColoredEnclosureSegment& segment :
+             BuildMergedEnclosureSegments(enclosure_rects, w, h)) {
+            canvas.ClearRect(segment.color, segment.rect);
+        }
+    }
+
+    for (size_t char_index = 0; char_index < char_count; char_index++) {
+        const CaptionChar& ch = region.chars[char_index];
         int section_x = ScaleX(ch.x) - ScaleX(region.x);
         int section_y = ScaleY(ch.y) - ScaleY(region.y);
         Rect section_rect(section_x,
@@ -131,12 +182,12 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
         }
 
         // Draw background if not disabled
-        if (!force_no_background_) {
+        if (!force_no_background_ && enclosure_rects.empty()) {
             canvas.ClearRect(ch.back_color, section_rect);
         }
 
         // Draw enclosure if needed
-        if (ch.enclosure_style) {
+        if (ch.enclosure_style && !merge_enclosure[char_index]) {
             ColorRGBA enclosure_color = (ch.style & CharStyle::kCharStyleColoredEnclosure)
                 ? ch.stroke_color
                 : ch.text_color;
