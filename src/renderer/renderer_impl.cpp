@@ -390,13 +390,48 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
     // Set up origin plane size / target caption area
     AdjustCaptionArea(caption.plane_width, caption.plane_height);
 
-    std::vector<Image> images;
-    for (CaptionRegion& region : caption.regions) {
-        if (region.is_ruby && force_no_ruby_) {
-            continue;
+    std::vector<CaptionRegion*> render_regions;
+    CaptionRegion merged_region;
+    if (merge_region_images_) {
+        bool initialized = false;
+        int right = 0;
+        int bottom = 0;
+        for (CaptionRegion& region : caption.regions) {
+            if (region.is_ruby && force_no_ruby_) {
+                continue;
+            }
+            if (!initialized) {
+                merged_region.x = region.x;
+                merged_region.y = region.y;
+                right = region.x + region.width;
+                bottom = region.y + region.height;
+                initialized = true;
+            } else {
+                merged_region.x = std::min(merged_region.x, region.x);
+                merged_region.y = std::min(merged_region.y, region.y);
+                right = std::max(right, region.x + region.width);
+                bottom = std::max(bottom, region.y + region.height);
+            }
+            merged_region.chars.insert(
+                merged_region.chars.end(), region.chars.begin(), region.chars.end());
         }
+        if (initialized) {
+            merged_region.width = right - merged_region.x;
+            merged_region.height = bottom - merged_region.y;
+            render_regions.push_back(&merged_region);
+        }
+    } else {
+        for (CaptionRegion& region : caption.regions) {
+            if (!region.is_ruby || !force_no_ruby_) {
+                render_regions.push_back(&region);
+            }
+        }
+    }
 
-        Result<Image, RegionRenderError> result = region_renderer_.RenderCaptionRegion(region, caption.drcs_map);
+    std::vector<Image> images;
+    for (CaptionRegion* region : render_regions) {
+
+        Result<Image, RegionRenderError> result = region_renderer_.RenderCaptionRegion(*region, caption.drcs_map);
         if (result.is_ok()) {
             images.push_back(std::move(result.value()));
         } else if (result.error() == RegionRenderError::kImageTooSmall) {
@@ -407,12 +442,6 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
             InvalidatePrevRenderedImages();
             return RenderStatus::kError;
         }
-    }
-
-    if (merge_region_images_ && images.size() > 1) {
-        Image merged = MergeImages(images);
-        images.clear();
-        images.push_back(std::move(merged));
     }
 
     has_prev_rendered_caption_ = true;
