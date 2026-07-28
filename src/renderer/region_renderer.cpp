@@ -120,6 +120,24 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
     Canvas canvas(bitmap);
     TextRenderContext text_render_ctx = text_renderer_->BeginDraw(bitmap);
 
+    // Paint the complete background layer before any enclosure or glyph.
+    // B62 line boxes may overlap when lineHeight is smaller than the glyph
+    // extents.  Painting a later line's background in character order would
+    // otherwise erase the stroke and descenders of an earlier line.
+    if (!force_no_background_) {
+        for (const CaptionChar& ch : region.chars) {
+            int section_x = ScaleX(ch.x) - ScaleX(region.x);
+            int section_y = ScaleY(ch.y) - ScaleY(region.y);
+            Rect section_rect(section_x,
+                              section_y,
+                              section_x + ScaleWidth(ch.section_width(), ch.x),
+                              section_y + ScaleHeight(ch.section_height(), ch.y));
+            if (section_rect.width() >= 3 && section_rect.height() >= 3) {
+                canvas.ClearRect(ch.back_color, section_rect);
+            }
+        }
+    }
+
     constexpr unsigned kFullEnclosure =
         kEnclosureStyleTop | kEnclosureStyleBottom |
         kEnclosureStyleLeft | kEnclosureStyleRight;
@@ -144,23 +162,9 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
         enclosure_rects.push_back({section_rect, ch.stroke_color});
     }
 
-    // B62 maps a full arib-tt:border to a colored enclosure.  Paint all
-    // backgrounds first so the shared B24 bitmap renderer can then draw only
-    // the outer edge of the union without later cells erasing that edge.
+    // B62 maps a full arib-tt:border to a colored enclosure.  The shared B24
+    // bitmap renderer draws only the outer edge of the union.
     if (!enclosure_rects.empty()) {
-        if (!force_no_background_) {
-            for (const CaptionChar& ch : region.chars) {
-                int section_x = ScaleX(ch.x) - ScaleX(region.x);
-                int section_y = ScaleY(ch.y) - ScaleY(region.y);
-                Rect section_rect(section_x,
-                                  section_y,
-                                  section_x + ScaleWidth(ch.section_width(), ch.x),
-                                  section_y + ScaleHeight(ch.section_height(), ch.y));
-                if (section_rect.width() >= 3 && section_rect.height() >= 3) {
-                    canvas.ClearRect(ch.back_color, section_rect);
-                }
-            }
-        }
         int w = std::max(ScaleX(1), 1);  // use floor
         int h = std::max(ScaleY(1), 1);  // use floor
         for (const ColoredEnclosureSegment& segment :
@@ -179,11 +183,6 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
                           section_y + ScaleHeight(ch.section_height(), ch.y));
         if (section_rect.width() < 3 || section_rect.height() < 3) {
             continue;  // Too small, skip
-        }
-
-        // Draw background if not disabled
-        if (!force_no_background_ && enclosure_rects.empty()) {
-            canvas.ClearRect(ch.back_color, section_rect);
         }
 
         // Draw enclosure if needed
