@@ -23,6 +23,13 @@ int main(void) {
     aribcc_b62_decoder_t* decoder = aribcc_b62_decoder_alloc(context);
     assert(decoder != NULL);
 
+    aribcc_b62_decode_options_t options;
+    memset(&options, 0xff, sizeof(options));
+    aribcc_b62_decode_options_init(&options);
+    assert(options.document_pts == ARIBCC_PTS_NOPTS);
+    assert(options.time_base_pts == ARIBCC_PTS_NOPTS);
+    assert(options.operation_mode == ARIBCC_B62_OPERATION_MODE_SEGMENT);
+
     aribcc_b62_decode_result_t result = {0};
     aribcc_b62_decode_status_t status = aribcc_b62_decoder_decode(
         decoder, (const uint8_t*)kTTML, strlen(kTTML), 1000, &result);

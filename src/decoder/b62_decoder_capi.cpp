@@ -94,6 +94,18 @@ aribcc_b62_decode_status_t ConvertResult(B62DecodeResult&& result,
 
 extern "C" {
 
+void aribcc_b62_decode_options_init(aribcc_b62_decode_options_t* options) {
+    if (!options) {
+        return;
+    }
+    options->document_pts = ARIBCC_PTS_NOPTS;
+    options->time_base_pts = ARIBCC_PTS_NOPTS;
+    options->operation_mode = ARIBCC_B62_OPERATION_MODE_SEGMENT;
+    options->align_earliest_to_document_pts = false;
+    options->ignore_document_timing = false;
+    options->discontinuity = false;
+}
+
 aribcc_b62_decoder_t* aribcc_b62_decoder_alloc(aribcc_context_t* context) {
     if (!context) {
         return nullptr;

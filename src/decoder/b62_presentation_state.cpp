@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <iterator>
 #include <limits>
-#include <unordered_map>
 
 namespace aribcaption::internal {
 namespace {
