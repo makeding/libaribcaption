@@ -162,6 +162,7 @@ add_library(aribcaption
         include/aribcaption/aribcc_export.h
         include/aribcaption/b62_decoder.h
         include/aribcaption/b62_decoder.hpp
+        include/aribcaption/b62_document.hpp
         include/aribcaption/caption.h
         include/aribcaption/caption.hpp
         include/aribcaption/color.h
@@ -204,10 +205,15 @@ add_library(aribcaption
         src/decoder/b24_macros.hpp
         src/decoder/b62_decoder.cpp
         src/decoder/b62_decoder_capi.cpp
+        src/decoder/b62_document_sidecar.cpp
         src/decoder/b62_decoder_impl.cpp
         src/decoder/b62_decoder_impl.hpp
         src/decoder/b62_presentation_state.cpp
         src/decoder/b62_presentation_state.hpp
+        src/decoder/b62_resource_store.cpp
+        src/decoder/b62_resource_store.hpp
+        src/decoder/b62_xml.cpp
+        src/decoder/b62_xml.hpp
         src/decoder/decoder.cpp
         src/decoder/decoder_capi.cpp
         src/decoder/decoder_impl.cpp
@@ -412,6 +418,7 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/aribcaption.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/b62_decoder.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/b62_decoder.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/b62_document.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/caption.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/caption.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/color.h
