@@ -410,6 +410,8 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/aribcc_export.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/aribcaption.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/aribcaption.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/b62_decoder.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/b62_decoder.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/caption.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/caption.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/aribcaption/color.h

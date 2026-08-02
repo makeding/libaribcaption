@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "aribcaption/caption.hpp"
+#include "aribcaption/b62_decoder.hpp"
 
 namespace aribcaption::internal {
 
@@ -27,12 +27,20 @@ struct B62PresentationNode {
     Caption caption;
 };
 
+struct B62PresentationMetadata {
+    std::vector<B62RubyAssociation> ruby_associations;
+    std::vector<B62FontFace> font_faces;
+    std::vector<B62AudioCue> audio_cues;
+    std::vector<B62BackgroundImage> background_images;
+};
+
 struct B62Presentation {
     uint64_t event_id = 0;
     int64_t start = PTS_NOPTS;
     int plane_width = 3840;
     int plane_height = 2160;
     uint32_t language = 0;
+    B62PresentationMetadata metadata;
     std::vector<B62PresentationNode> nodes;
 };
 
@@ -59,7 +67,8 @@ public:
 
     void BuildScenes(int64_t current_pts,
                      size_t max_events,
-                     std::vector<Caption>& out_captions) const;
+                     std::vector<Caption>& out_captions,
+                     B62PresentationMetadata* out_metadata = nullptr) const;
 
     [[nodiscard]] bool empty() const { return presentations_.empty(); }
 

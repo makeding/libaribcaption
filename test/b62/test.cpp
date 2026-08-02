@@ -6,9 +6,11 @@
  * copyright notice and this permission notice appear in all copies.
  */
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 
 #include "aribcaption/b62_decoder.hpp"
@@ -77,6 +79,42 @@ constexpr char kOverlongCenteredTTML[] = R"TTML(<?xml version="1.0" encoding="UT
   <body><div><p region="narrow" style="base">中央寄せ</p></div></body>
 </tt>)TTML";
 
+constexpr char kSpanRegionTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling">
+  <head><styling><style xml:id="vertical" tts:writingMode="tbrl"/></styling><layout>
+    <region xml:id="base" tts:origin="100px 100px" tts:extent="400px 200px"/>
+    <region xml:id="side" tts:origin="900px 300px" tts:extent="200px 400px"/>
+  </layout></head>
+  <body><div><p region="base" begin="0s" end="10s"><span region="side" style="vertical">A</span><span style="vertical">B</span><span region="side" style="vertical">C</span></p></div></body>
+</tt>)TTML";
+
+constexpr char kDocumentRubyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling"
+    xmlns:arib-tt="http://www.arib.or.jp/ns/arib-tt">
+  <head><layout><region xml:id="r" tts:origin="100px 100px" tts:extent="1000px 800px"/></layout></head>
+  <body>
+    <div xml:id="div-target"><p xml:id="p-target" region="r" begin="0s" end="10s">段落<span xml:id="span-target">本文</span></p></div>
+    <div arib-tt:ruby="div-target"><p arib-tt:ruby="p-target" region="r" begin="0s" end="10s">注釈</p></div>
+    <div><p region="r" begin="0s" end="10s"><span arib-tt:ruby="span-target">ルビ</span><span arib-tt:ruby="missing">未解決</span></p></div>
+  </body>
+</tt>)TTML";
+
+constexpr char kFontAudioTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:arib-tt="http://www.arib.or.jp/ns/arib-tt"
+    xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt" xml:lang="ja">
+  <head><styling>
+    <arib-tt:font-face xml:id="gaiji" font-family="External" unicode-range="U+E000-E001">
+      <arib-tt:src url="subt://1" format="woff"/>
+    </arib-tt:font-face>
+  </styling><metadata>
+    <smpte:image xml:id="embedded" imageType="PNG" encoding="Base64">iVBORw==</smpte:image>
+  </metadata></head>
+  <body><div xml:id="audio-owner" begin="2s" end="4s">
+    <arib-tt:audio xml:id="audio" src="subt://2" loop="true"/>
+  </div><div xml:id="external-image" begin="5s" end="7s" smpte:backgroundImage="subt://3"/>
+  <div xml:id="embedded-image" begin="8s" end="10s" smpte:backgroundImage="#embedded"/></body>
+</tt>)TTML";
+
 constexpr char kOverlappingTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
   <body><div>
     <p begin="0s" end="10s">first</p>
@@ -89,6 +127,15 @@ constexpr char kLiveFirstTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" x
 </tt>)TTML";
 
 constexpr char kLiveSecondTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p xml:id="p4" begin="indefinite" end="10s">ignored replacement</p></div></body>
+</tt>)TTML";
+
+constexpr char kLiveRubyFirstTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:arib-tt="http://www.arib.or.jp/ns/arib-tt" xml:lang="ja">
+  <body><div><p xml:id="p4" begin="0s" end="indefinite"><span xml:id="ruby-base">本文</span><span arib-tt:ruby="ruby-base">ルビ</span></p></div></body>
+</tt>)TTML";
+
+constexpr char kLiveRubySecondTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
   <body><div><p xml:id="p4" begin="indefinite" end="10s">ignored replacement</p></div></body>
 </tt>)TTML";
 
@@ -167,11 +214,200 @@ int main() {
     assert(chars.size() == 7);
     assert(chars[1].y > chars[0].y);
 
+    const uint8_t resource_bytes[] = {0x00, 0x01, 0x02, 0x03};
+    aribcaption::B62ResourceView resource;
+    resource.index = 1;
+    resource.data = resource_bytes;
+    resource.size = sizeof(resource_bytes);
+    resource.mime_type = "image/svg+xml";
+    aribcaption::B62ResourceContextView resource_context;
+    resource_context.scope_id = 0x10001;
+    resource_context.resources = &resource;
+    resource_context.resource_count = 1;
+    aribcaption::B62DecodeOptions resource_options;
+    resource_options.document_pts = 21000;
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kVerticalTTML),
+                            std::strlen(kVerticalTTML), resource_options, resource_context, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].regions[0].x == 2920);
+
+    aribcaption::B62ResourceView invalid_resource;
+    invalid_resource.index = 2;
+    invalid_resource.data = nullptr;
+    invalid_resource.size = 1;
+    resource_context.resources = &invalid_resource;
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kVerticalTTML),
+                            std::strlen(kVerticalTTML), resource_options, resource_context, result);
+    assert(status == aribcaption::B62DecodeStatus::kError);
+    assert(result.captions.empty());
+
+    resource_context.scope_id = 0;
+    resource_context.resources = nullptr;
+    resource_context.resource_count = 0;
+    resource_options.document_pts = 0;
+    aribcaption::B62DocumentDecodeResult document_result;
+    status = decoder.DecodeDocument(reinterpret_cast<const uint8_t*>(kOverlongCenteredTTML),
+                                    std::strlen(kOverlongCenteredTTML), resource_options,
+                                    resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions[0].regions[0].x == 1000);
+    assert(document_result.captions[0].regions[0].width == 200);
+
+    status = decoder.DecodeDocument(reinterpret_cast<const uint8_t*>(kSpanRegionTTML),
+                                    std::strlen(kSpanRegionTTML), resource_options,
+                                    resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions[0].regions.size() == 1);
+    assert(document_result.captions[0].regions[0].x == 100);
+    assert(document_result.captions[0].regions[0].y == 100);
+    assert(document_result.captions[0].regions[0].width == 400);
+    assert(document_result.captions[0].regions[0].height == 200);
+    assert(document_result.captions[0].regions[0].chars.size() == 3);
+    assert(document_result.captions[0].regions[0].chars[0].x >= 700);
+    assert(document_result.captions[0].regions[0].chars[1].y >
+           document_result.captions[0].regions[0].chars[0].y);
+    assert(document_result.captions[0].regions[0].chars[2].y ==
+           document_result.captions[0].regions[0].chars[0].y);
+
+    status = decoder.DecodeDocument(reinterpret_cast<const uint8_t*>(kDocumentRubyTTML),
+                                    std::strlen(kDocumentRubyTTML), resource_options,
+                                    resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions.size() == 2);
+    assert(document_result.captions[0].text == "段落本文");
+    size_t normal_region_count = 0;
+    size_t ruby_region_count = 0;
+    for (const auto& region : document_result.captions[0].regions) {
+        assert(region.x == 100);
+        assert(region.y == 100);
+        assert(region.width == 1000);
+        assert(region.height == 800);
+        if (region.is_ruby) {
+            ruby_region_count++;
+        } else {
+            normal_region_count++;
+        }
+    }
+    assert(normal_region_count == 1);
+    assert(ruby_region_count == 2);
+    assert(document_result.sidecar);
+    const auto& ruby_associations = document_result.sidecar->ruby_associations();
+    assert(ruby_associations.size() == 4);
+    const auto span_ruby = std::find_if(
+        ruby_associations.begin(), ruby_associations.end(),
+        [](const aribcaption::B62RubyAssociation& association) {
+            return association.target_id == "span-target";
+        });
+    assert(span_ruby != ruby_associations.end());
+    assert(span_ruby->annotation_type == aribcaption::B62ElementType::kSpan);
+    assert(span_ruby->target_type == aribcaption::B62ElementType::kSpan);
+    assert(span_ruby->annotation_text == "ルビ");
+    assert(span_ruby->target_text == "本文");
+    const auto unresolved_ruby = std::find_if(
+        ruby_associations.begin(), ruby_associations.end(),
+        [](const aribcaption::B62RubyAssociation& association) {
+            return association.target_id == "missing";
+        });
+    assert(unresolved_ruby != ruby_associations.end());
+    assert(unresolved_ruby->target_type == aribcaption::B62ElementType::kUnknown);
+
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kDocumentRubyTTML),
+                            std::strlen(kDocumentRubyTTML), 0, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kOverlongCenteredTTML),
                             std::strlen(kOverlongCenteredTTML), 30000, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
     assert(result.captions[0].regions[0].x < 1000);
     assert(result.captions[0].regions[0].width > 200);
+
+    aribcaption::B62Decoder isolated_decoder(context);
+    aribcaption::B62DecodeOptions isolated_options;
+    isolated_options.operation_mode = aribcaption::B62OperationMode::kLive;
+    isolated_options.document_pts = 1000;
+    isolated_options.time_base_pts = 1000;
+    status = isolated_decoder.Decode(reinterpret_cast<const uint8_t*>(kLiveFirstTTML),
+                                     std::strlen(kLiveFirstTTML), isolated_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    status = isolated_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kLiveRubyFirstTTML),
+        std::strlen(kLiveRubyFirstTTML), isolated_options, resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions[0].text == "本文");
+    assert(document_result.sidecar);
+    assert(document_result.sidecar->ruby_associations().size() == 1);
+
+    isolated_options.document_pts = 6000;
+    status = isolated_decoder.Decode(reinterpret_cast<const uint8_t*>(kLiveSecondTTML),
+                                     std::strlen(kLiveSecondTTML), isolated_options, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].text == "continued");
+    status = isolated_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kLiveRubySecondTTML),
+        std::strlen(kLiveRubySecondTTML), isolated_options, resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions[0].text == "本文");
+    assert(document_result.sidecar);
+    assert(document_result.sidecar->ruby_associations().size() == 1);
+    assert(document_result.sidecar->ruby_associations()[0].target_id == "ruby-base");
+
+    const uint8_t font_bytes[] = {0x77, 0x4f, 0x46, 0x46};
+    const uint8_t audio_bytes[] = {0x49, 0x44, 0x33};
+    const uint8_t image_bytes[] = {0x89, 0x50, 0x4e, 0x47};
+    aribcaption::B62ResourceView font_audio_resources[3];
+    font_audio_resources[0].index = 1;
+    font_audio_resources[0].data = font_bytes;
+    font_audio_resources[0].size = sizeof(font_bytes);
+    font_audio_resources[0].mime_type = "font/woff";
+    font_audio_resources[1].index = 2;
+    font_audio_resources[1].data = audio_bytes;
+    font_audio_resources[1].size = sizeof(audio_bytes);
+    font_audio_resources[1].mime_type = "audio/mpeg";
+    font_audio_resources[2].index = 3;
+    font_audio_resources[2].data = image_bytes;
+    font_audio_resources[2].size = sizeof(image_bytes);
+    font_audio_resources[2].mime_type = "image/png";
+    aribcaption::B62ResourceContextView font_audio_context;
+    font_audio_context.resources = font_audio_resources;
+    font_audio_context.resource_count = 3;
+    aribcaption::B62DecodeOptions font_audio_options;
+    font_audio_options.document_pts = 0;
+    status = isolated_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kFontAudioTTML),
+        std::strlen(kFontAudioTTML), font_audio_options,
+        font_audio_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.sidecar);
+    assert(document_result.sidecar->font_faces().size() == 1);
+    const auto& font_face = document_result.sidecar->font_faces()[0];
+    assert(font_face.id == "gaiji");
+    assert(font_face.family == "External");
+    assert(font_face.sources.size() == 1);
+    assert(font_face.sources[0].format == aribcaption::B62FontFormat::kWOFF);
+    assert(font_face.sources[0].resource.resolved);
+    assert(font_face.sources[0].resource.resolved->scope_id == 0);
+    assert(font_face.sources[0].resource.resolved->bytes->size() == sizeof(font_bytes));
+    assert(document_result.sidecar->audio_cues().size() == 1);
+    const auto& audio_cue = document_result.sidecar->audio_cues()[0];
+    assert(audio_cue.owner_type == aribcaption::B62ElementType::kDiv);
+    assert(audio_cue.owner_id == "audio-owner");
+    assert(audio_cue.loop);
+    assert(audio_cue.begin_pts == 2000);
+    assert(audio_cue.end_pts && *audio_cue.end_pts == 4000);
+    assert(audio_cue.source.resolved);
+    assert(audio_cue.source.resolved->bytes->size() == sizeof(audio_bytes));
+    assert(document_result.sidecar->background_images().size() == 2);
+    const auto& external_image = document_result.sidecar->background_images()[0];
+    assert(external_image.owner_id == "external-image");
+    assert(external_image.begin_pts == 5000);
+    assert(external_image.source.resolved);
+    assert(external_image.source.resolved->kind == aribcaption::B62ResourceKind::kPNGImage);
+    assert(external_image.source.resolved->bytes->size() == sizeof(image_bytes));
+    const auto& embedded_image = document_result.sidecar->background_images()[1];
+    assert(embedded_image.owner_id == "embedded-image");
+    assert(embedded_image.source.resolved);
+    assert(embedded_image.source.resolved->index == std::numeric_limits<uint32_t>::max());
+    assert(embedded_image.source.resolved->bytes->size() == 4);
 
     aribcaption::B62DecodeOptions options;
     options.document_pts = 1000;

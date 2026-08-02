@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
@@ -30,6 +31,13 @@
 
 namespace aribcaption::internal {
 namespace {
+
+constexpr size_t kMaxResourceScopes = 32;
+constexpr size_t kMaxResourcesPerScope = 256;
+constexpr size_t kMaxResourceBytes = 16u * 1024u * 1024u;
+constexpr size_t kMaxResourceScopeBytes = 64u * 1024u * 1024u;
+constexpr size_t kMaxTotalResourceBytes = 128u * 1024u * 1024u;
+constexpr size_t kMaxResourceMimeLength = 255;
 
 using Style = std::unordered_map<std::string, std::string>;
 
@@ -47,6 +55,9 @@ struct InlineSpan {
     std::string id;
     std::string ruby_target_id;
     std::string ruby_text;
+    const RegionDefinition* region = nullptr;
+    bool resets_position = false;
+    bool is_ruby = false;
 };
 
 struct RawCue {
@@ -55,6 +66,22 @@ struct RawCue {
     std::optional<int64_t> start;
     std::optional<int64_t> end;
     bool indefinite_start = false;
+    bool indefinite = false;
+};
+
+struct RawAudioCue {
+    const tinyxml2::XMLElement* node = nullptr;
+    const tinyxml2::XMLElement* owner = nullptr;
+    std::optional<int64_t> start;
+    std::optional<int64_t> end;
+    bool indefinite = false;
+};
+
+struct RawBackgroundImage {
+    const tinyxml2::XMLElement* owner = nullptr;
+    const char* source = nullptr;
+    std::optional<int64_t> start;
+    std::optional<int64_t> end;
     bool indefinite = false;
 };
 
@@ -107,6 +134,164 @@ const char* FindAttribute(const tinyxml2::XMLElement* element, std::string_view 
         }
     }
     return nullptr;
+}
+
+const char* FindXMLID(const tinyxml2::XMLElement* element) {
+    return element ? element->Attribute("xml:id") : nullptr;
+}
+
+const char* ResolveNamespace(const tinyxml2::XMLElement* element, std::string_view prefix) {
+    const std::string declaration = "xmlns:" + std::string(prefix);
+    for (const tinyxml2::XMLNode* node = element; node; node = node->Parent()) {
+        const tinyxml2::XMLElement* current = node->ToElement();
+        if (!current) {
+            continue;
+        }
+        if (const char* uri = current->Attribute(declaration.c_str())) {
+            return uri;
+        }
+    }
+    return nullptr;
+}
+
+const char* FindARIBAttribute(const tinyxml2::XMLElement* element, std::string_view local_name) {
+    if (!element) {
+        return nullptr;
+    }
+    for (const tinyxml2::XMLAttribute* attr = element->FirstAttribute(); attr; attr = attr->Next()) {
+        std::string_view name(attr->Name());
+        size_t colon = name.rfind(':');
+        if (colon == std::string_view::npos || name.substr(colon + 1) != local_name) {
+            continue;
+        }
+        const char* uri = ResolveNamespace(element, name.substr(0, colon));
+        if (uri && (std::strcmp(uri, "http://www.arib.or.jp/ns/arib-tt") == 0 ||
+                    std::strcmp(uri, "http://www.arib.or.jp/ns/arib-ttml/v1_0") == 0)) {
+            return attr->Value();
+        }
+    }
+    return nullptr;
+}
+
+const char* FindNamespacedAttribute(const tinyxml2::XMLElement* element,
+                                    std::string_view local_name,
+                                    std::string_view namespace_uri) {
+    if (!element) {
+        return nullptr;
+    }
+    for (const tinyxml2::XMLAttribute* attr = element->FirstAttribute(); attr; attr = attr->Next()) {
+        std::string_view name(attr->Name());
+        size_t colon = name.rfind(':');
+        if (colon == std::string_view::npos || name.substr(colon + 1) != local_name) {
+            continue;
+        }
+        const char* uri = ResolveNamespace(element, name.substr(0, colon));
+        if (uri && uri == namespace_uri) {
+            return attr->Value();
+        }
+    }
+    return nullptr;
+}
+
+bool HasARIBRubyAncestor(const tinyxml2::XMLElement* element) {
+    for (const tinyxml2::XMLNode* node = element; node; node = node->Parent()) {
+        const tinyxml2::XMLElement* current = node->ToElement();
+        if (!current) {
+            continue;
+        }
+        if (FindARIBAttribute(current, "ruby")) {
+            return true;
+        }
+        if (LocalName(current->Name()) == "tt") {
+            break;
+        }
+    }
+    return false;
+}
+
+bool IsARIBElement(const tinyxml2::XMLElement* element, std::string_view local_name) {
+    if (!element || LocalName(element->Name()) != local_name) {
+        return false;
+    }
+    std::string_view name(element->Name());
+    size_t colon = name.rfind(':');
+    if (colon == std::string_view::npos) {
+        return false;
+    }
+    const char* uri = ResolveNamespace(element, name.substr(0, colon));
+    return uri && (std::strcmp(uri, "http://www.arib.or.jp/ns/arib-tt") == 0 ||
+                   std::strcmp(uri, "http://www.arib.or.jp/ns/arib-ttml/v1_0") == 0);
+}
+
+bool IsSMPTEElement(const tinyxml2::XMLElement* element, std::string_view local_name) {
+    if (!element || LocalName(element->Name()) != local_name) {
+        return false;
+    }
+    std::string_view name(element->Name());
+    size_t colon = name.rfind(':');
+    if (colon == std::string_view::npos) {
+        return false;
+    }
+    const char* uri = ResolveNamespace(element, name.substr(0, colon));
+    return uri && std::strcmp(
+        uri, "http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt") == 0;
+}
+
+std::optional<uint32_t> ParseSubtResourceIndex(std::string_view uri) {
+    constexpr std::string_view kPrefix = "subt://";
+    if (uri.substr(0, kPrefix.size()) != kPrefix || uri.size() == kPrefix.size()) {
+        return std::nullopt;
+    }
+    uint64_t value = 0;
+    for (char ch : uri.substr(kPrefix.size())) {
+        if (ch < '0' || ch > '9') {
+            return std::nullopt;
+        }
+        value = value * 10 + static_cast<uint64_t>(ch - '0');
+        if (value > std::numeric_limits<uint32_t>::max()) {
+            return std::nullopt;
+        }
+    }
+    return static_cast<uint32_t>(value);
+}
+
+std::optional<std::vector<uint8_t>> DecodeBase64(std::string_view encoded) {
+    std::vector<uint8_t> decoded;
+    decoded.reserve(std::min(kMaxResourceBytes, encoded.size() * 3 / 4));
+    uint32_t accumulator = 0;
+    int bits = 0;
+    bool padding = false;
+    for (unsigned char ch : encoded) {
+        if (std::isspace(ch)) {
+            continue;
+        }
+        if (ch == '=') {
+            padding = true;
+            continue;
+        }
+        if (padding) {
+            return std::nullopt;
+        }
+        int value = -1;
+        if (ch >= 'A' && ch <= 'Z') value = ch - 'A';
+        else if (ch >= 'a' && ch <= 'z') value = ch - 'a' + 26;
+        else if (ch >= '0' && ch <= '9') value = ch - '0' + 52;
+        else if (ch == '+') value = 62;
+        else if (ch == '/') value = 63;
+        if (value < 0) {
+            return std::nullopt;
+        }
+        accumulator = (accumulator << 6) | static_cast<uint32_t>(value);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (decoded.size() >= kMaxResourceBytes) {
+                return std::nullopt;
+            }
+            decoded.push_back(static_cast<uint8_t>((accumulator >> bits) & 0xff));
+        }
+    }
+    return decoded;
 }
 
 const tinyxml2::XMLElement* FirstChild(const tinyxml2::XMLElement* parent, std::string_view local_name) {
@@ -199,6 +384,87 @@ std::string NormalizeText(std::string_view input) {
         output.push_back(ch);
     }
     return TrimASCII(std::move(output));
+}
+
+void AppendElementText(const tinyxml2::XMLNode* parent, std::string& output) {
+    for (const tinyxml2::XMLNode* child = parent ? parent->FirstChild() : nullptr;
+         child; child = child->NextSibling()) {
+        if (const tinyxml2::XMLText* text = child->ToText()) {
+            output += text->Value();
+            continue;
+        }
+        const tinyxml2::XMLElement* element = child->ToElement();
+        if (!element) {
+            continue;
+        }
+        if (LocalName(element->Name()) == "br") {
+            output.push_back('\n');
+        } else {
+            AppendElementText(element, output);
+        }
+    }
+}
+
+std::string ElementText(const tinyxml2::XMLElement* element) {
+    std::string text;
+    AppendElementText(element, text);
+    return NormalizeText(text);
+}
+
+B62ElementType ElementType(const tinyxml2::XMLElement* element) {
+    if (!element) {
+        return B62ElementType::kUnknown;
+    }
+    std::string_view name = LocalName(element->Name());
+    if (name == "div") return B62ElementType::kDiv;
+    if (name == "p") return B62ElementType::kParagraph;
+    if (name == "span") return B62ElementType::kSpan;
+    return B62ElementType::kUnknown;
+}
+
+void CollectRubyElements(const tinyxml2::XMLElement* parent,
+                         std::vector<const tinyxml2::XMLElement*>& elements) {
+    if (!parent) {
+        return;
+    }
+    for (const tinyxml2::XMLElement* child = parent->FirstChildElement();
+         child; child = child->NextSiblingElement()) {
+        if (ElementType(child) != B62ElementType::kUnknown) {
+            elements.push_back(child);
+        }
+        CollectRubyElements(child, elements);
+    }
+}
+
+void CollectRubyAssociations(const tinyxml2::XMLElement* tt,
+                             std::vector<B62RubyAssociation>& associations) {
+    std::vector<const tinyxml2::XMLElement*> elements;
+    CollectRubyElements(tt, elements);
+    std::unordered_map<std::string, const tinyxml2::XMLElement*> targets;
+    for (const tinyxml2::XMLElement* element : elements) {
+        if (const char* id = FindXMLID(element)) {
+            targets.emplace(id, element);
+        }
+    }
+    for (const tinyxml2::XMLElement* element : elements) {
+        const char* target_id = FindARIBAttribute(element, "ruby");
+        if (!target_id) {
+            continue;
+        }
+        B62RubyAssociation association;
+        association.annotation_type = ElementType(element);
+        if (const char* annotation_id = FindXMLID(element)) {
+            association.annotation_id = annotation_id;
+        }
+        association.target_id = target_id;
+        association.annotation_text = ElementText(element);
+        auto target = targets.find(target_id);
+        if (target != targets.end()) {
+            association.target_type = ElementType(target->second);
+            association.target_text = ElementText(target->second);
+        }
+        associations.push_back(std::move(association));
+    }
 }
 
 std::optional<double> ParseLength(std::string_view value, double base) {
@@ -428,12 +694,20 @@ void AppendInlineSpans(const tinyxml2::XMLElement* parent,
                        const Style& inherited_style,
                        const std::unordered_map<std::string, const tinyxml2::XMLElement*>& style_nodes,
                        std::unordered_map<std::string, Style>& style_cache,
-                       std::vector<InlineSpan>& spans) {
+                       std::vector<InlineSpan>& spans,
+                       const std::unordered_map<std::string, RegionDefinition>* region_definitions,
+                       const RegionDefinition* inherited_region,
+                       bool inherited_is_ruby) {
     for (const tinyxml2::XMLNode* child = parent->FirstChild(); child; child = child->NextSibling()) {
         if (const tinyxml2::XMLText* text = child->ToText()) {
             std::string normalized = NormalizeText(text->Value());
             if (!normalized.empty()) {
-                spans.push_back({std::move(normalized), inherited_style, {}, {}, {}});
+                InlineSpan span;
+                span.text = std::move(normalized);
+                span.style = inherited_style;
+                span.region = inherited_region;
+                span.is_ruby = inherited_is_ruby;
+                spans.push_back(std::move(span));
             }
             continue;
         }
@@ -443,17 +717,44 @@ void AppendInlineSpans(const tinyxml2::XMLElement* parent,
         }
         std::string_view name = LocalName(element->Name());
         if (name == "br") {
-            spans.push_back({"\n", inherited_style, {}, {}, {}});
+            InlineSpan span;
+            span.text = "\n";
+            span.style = inherited_style;
+            span.region = inherited_region;
+            span.is_ruby = inherited_is_ruby;
+            spans.push_back(std::move(span));
             continue;
         }
         if (name != "span") {
-            AppendInlineSpans(element, inherited_style, style_nodes, style_cache, spans);
+            AppendInlineSpans(element, inherited_style, style_nodes, style_cache, spans,
+                              region_definitions, inherited_region, inherited_is_ruby);
             continue;
         }
 
-        Style style = MergeNodeStyle(element, inherited_style, style_nodes, style_cache);
+        const RegionDefinition* region = inherited_region;
+        Style region_style = inherited_style;
+        bool resets_position = false;
+        if (region_definitions) {
+            if (const char* region_id = FindAttribute(element, "region")) {
+                auto resolved = region_definitions->find(region_id);
+                if (resolved != region_definitions->end()) {
+                    region = &resolved->second;
+                    resets_position = true;
+                    for (const auto& [key, value] : region->style) {
+                        region_style[key] = value;
+                    }
+                }
+            }
+        }
+        Style style = MergeNodeStyle(element, std::move(region_style), style_nodes, style_cache);
+        const bool is_ruby = inherited_is_ruby ||
+            (region_definitions && FindARIBAttribute(element, "ruby") != nullptr);
         size_t begin = spans.size();
-        AppendInlineSpans(element, style, style_nodes, style_cache, spans);
+        AppendInlineSpans(element, style, style_nodes, style_cache, spans,
+                          region_definitions, region, is_ruby);
+        if (resets_position && begin < spans.size()) {
+            spans[begin].resets_position = true;
+        }
         const char* id = FindAttribute(element, "id");
         const char* ruby = FindAttribute(element, "ruby");
         for (size_t i = begin; i < spans.size(); i++) {
@@ -746,7 +1047,8 @@ void AppendRubyRegion(const InlineSpan& span,
     int x = base.left;
     for (uint32_t codepoint : codepoints) {
         CaptionChar character = MakeCaptionChar(
-            codepoint, span.style, x, y, font_size.width, font_size.height, font_size.height, 0, false);
+            codepoint, span.style, x, y, font_size.width, font_size.height,
+            font_size.height, 0, false);
         character.char_width = advance;
         ruby.chars.push_back(std::move(character));
         x += advance;
@@ -756,8 +1058,10 @@ void AppendRubyRegion(const InlineSpan& span,
 
 void LayoutHorizontal(const std::vector<InlineSpan>& spans,
                       const RegionDefinition& definition,
+                      const RegionDefinition& clip_definition,
                       const std::array<int, 2>& plane,
-                      Caption& caption) {
+                      Caption& caption,
+                      bool preserve_region_bounds) {
     std::vector<std::vector<CharacterPlacement>> lines(1);
     FontSize default_font_size = StyleFontSize(definition.style, plane, {72, 72});
     int line_height = StyleLength(definition.style, "lineHeight", plane[1],
@@ -790,11 +1094,14 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
         y += std::max(0, definition.height - content_height);
     }
 
-    CaptionRegion region;
-    region.x = definition.x;
-    region.y = definition.y;
-    region.width = definition.width;
-    region.height = definition.height;
+    CaptionRegion regions[2];
+    for (size_t i = 0; i < 2; ++i) {
+        regions[i].x = clip_definition.x;
+        regions[i].y = clip_definition.y;
+        regions[i].width = clip_definition.width;
+        regions[i].height = clip_definition.height;
+        regions[i].is_ruby = i == 1;
+    }
     std::unordered_map<const InlineSpan*, BoundingBox> span_bounds;
     std::string text_align = StyleValue(definition.style, "textAlign", "center");
 
@@ -819,14 +1126,18 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
             int glyph_x = x + character.char_horizontal_spacing / 2;
             int glyph_y = y + character.char_vertical_spacing / 2;
             span_bounds[placement.span].Include(glyph_x, glyph_y, placement.advance, font_size.height);
-            region.chars.push_back(std::move(character));
+            regions[placement.span->is_ruby ? 1 : 0].chars.push_back(std::move(character));
             x += placement.advance;
         }
         y += line_height;
     }
-    if (!region.chars.empty()) {
-        ExpandRegionToFitCharacters(region);
-        caption.regions.push_back(std::move(region));
+    for (CaptionRegion& region : regions) {
+        if (!region.chars.empty()) {
+            if (!preserve_region_bounds) {
+                ExpandRegionToFitCharacters(region);
+            }
+            caption.regions.push_back(std::move(region));
+        }
     }
     for (const InlineSpan& span : spans) {
         auto bounds = span_bounds.find(&span);
@@ -838,8 +1149,10 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
 
 void LayoutVertical(const std::vector<InlineSpan>& spans,
                     const RegionDefinition& definition,
+                    const RegionDefinition& clip_definition,
                     const std::array<int, 2>& plane,
-                    Caption& caption) {
+                    Caption& caption,
+                    bool preserve_region_bounds) {
     std::vector<std::vector<CharacterPlacement>> columns(1);
     FontSize default_font_size = StyleFontSize(definition.style, plane, {72, 72});
     int column_width = StyleLength(definition.style, "lineHeight", plane[0],
@@ -859,11 +1172,14 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
     bool right_to_left = StyleValue(definition.style, "writingMode", "tbrl") != "tblr" &&
                          StyleValue(definition.style, "writingMode", "tbrl") != "tb-lr";
     int x = right_to_left ? definition.x + definition.width - column_width : definition.x;
-    CaptionRegion region;
-    region.x = definition.x;
-    region.y = definition.y;
-    region.width = definition.width;
-    region.height = definition.height;
+    CaptionRegion regions[2];
+    for (size_t i = 0; i < 2; ++i) {
+        regions[i].x = clip_definition.x;
+        regions[i].y = clip_definition.y;
+        regions[i].width = clip_definition.width;
+        regions[i].height = clip_definition.height;
+        regions[i].is_ruby = i == 1;
+    }
     for (const auto& column : columns) {
         int column_height = 0;
         for (const CharacterPlacement& placement : column) {
@@ -884,14 +1200,18 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
                                                     font_size.height + letter_spacing, 0, false);
             character.char_horizontal_spacing = std::max(0, column_width - font_size.width);
             character.char_vertical_spacing = letter_spacing;
-            region.chars.push_back(std::move(character));
+            regions[placement.span->is_ruby ? 1 : 0].chars.push_back(std::move(character));
             y += placement.advance;
         }
         x += right_to_left ? -column_width : column_width;
     }
-    if (!region.chars.empty()) {
-        ExpandRegionToFitCharacters(region);
-        caption.regions.push_back(std::move(region));
+    for (CaptionRegion& region : regions) {
+        if (!region.chars.empty()) {
+            if (!preserve_region_bounds) {
+                ExpandRegionToFitCharacters(region);
+            }
+            caption.regions.push_back(std::move(region));
+        }
     }
 }
 
@@ -946,6 +1266,45 @@ const tinyxml2::XMLElement* FindNearestTimedNode(const tinyxml2::XMLElement* ele
     return nullptr;
 }
 
+bool IsVerticalWritingMode(const Style& style) {
+    std::string writing_mode = StyleValue(style, "writingMode");
+    return writing_mode == "tbrl" || writing_mode == "tb-rl" ||
+           writing_mode == "tblr" || writing_mode == "tb-lr";
+}
+
+RegionDefinition MakeFormattingDefinition(const RegionDefinition& region,
+                                          const Style& effective_style) {
+    RegionDefinition result = region;
+    result.style = effective_style;
+    if (StyleValue(result.style, "writingMode") == "tbrl") {
+        // TR-B39 defines tts:origin as the upper-right corner for vertical
+        // writing, while CaptionRegion and RegionRenderer use upper-left.
+        result.x -= result.width;
+    }
+    return result;
+}
+
+void MergeCaptionRegionsWithSameClip(Caption& caption) {
+    std::vector<CaptionRegion> merged;
+    for (CaptionRegion& region : caption.regions) {
+        auto target = std::find_if(merged.begin(), merged.end(),
+                                   [&](const CaptionRegion& candidate) {
+                                       return candidate.is_ruby == region.is_ruby &&
+                                              candidate.x == region.x && candidate.y == region.y &&
+                                              candidate.width == region.width &&
+                                              candidate.height == region.height;
+                                   });
+        if (target == merged.end()) {
+            merged.push_back(std::move(region));
+        } else {
+            target->chars.insert(target->chars.end(),
+                                 std::make_move_iterator(region.chars.begin()),
+                                 std::make_move_iterator(region.chars.end()));
+        }
+    }
+    caption.regions = std::move(merged);
+}
+
 }  // namespace
 
 B62DecoderImpl::B62DecoderImpl(Context& context) : log_(GetContextLogger(context)) {}
@@ -953,7 +1312,142 @@ B62DecoderImpl::B62DecoderImpl(Context& context) : log_(GetContextLogger(context
 B62DecoderImpl::~B62DecoderImpl() = default;
 
 void B62DecoderImpl::Reset() {
-    presentation_state_.Reset();
+    legacy_presentation_state_.Reset();
+    document_presentation_state_.Reset();
+    ClearResourceContexts();
+}
+
+bool B62DecoderImpl::StoreResourceContext(const B62ResourceContextView& resource_context) {
+    if ((resource_context.resource_count != 0 && !resource_context.resources) ||
+        resource_context.resource_count > kMaxResourcesPerScope) {
+        log_->e("B62DecoderImpl: invalid resource context");
+        return false;
+    }
+
+    B62ResourceScope staged;
+    size_t staged_bytes = 0;
+    for (size_t i = 0; i < resource_context.resource_count; ++i) {
+        const B62ResourceView& view = resource_context.resources[i];
+        if ((view.size != 0 && !view.data) || view.size > kMaxResourceBytes || staged.count(view.index)) {
+            log_->e("B62DecoderImpl: invalid resource view at index %zu", i);
+            return false;
+        }
+        size_t mime_length = 0;
+        if (view.mime_type) {
+            while (mime_length <= kMaxResourceMimeLength && view.mime_type[mime_length] != '\0') {
+                ++mime_length;
+            }
+            if (mime_length > kMaxResourceMimeLength) {
+                log_->e("B62DecoderImpl: resource MIME type is too long");
+                return false;
+            }
+        }
+        if (staged_bytes > kMaxResourceScopeBytes - view.size) {
+            log_->e("B62DecoderImpl: resource scope is too large");
+            return false;
+        }
+        B62OwnedResource owned;
+        if (view.size != 0) {
+            owned.data.assign(view.data, view.data + view.size);
+        }
+        if (view.mime_type) {
+            owned.mime_type.assign(view.mime_type, mime_length);
+        }
+        staged_bytes += view.size;
+        staged.emplace(view.index, std::move(owned));
+    }
+
+    if (resource_context.scope_id == 0) {
+        transient_resource_scope_ = std::move(staged);
+        active_resource_scope_id_ = 0;
+        has_active_resource_scope_ = true;
+        return true;
+    }
+
+    auto existing = resource_scopes_.find(resource_context.scope_id);
+    size_t existing_bytes = 0;
+    size_t replaced_bytes = 0;
+    size_t existing_count = 0;
+    if (existing != resource_scopes_.end()) {
+        existing_count = existing->second.size();
+        for (const auto& [index, resource] : existing->second) {
+            existing_bytes += resource.data.size();
+            if (staged.count(index)) {
+                replaced_bytes += resource.data.size();
+                --existing_count;
+            }
+        }
+    }
+    if (existing_count + staged.size() > kMaxResourcesPerScope ||
+        existing_bytes - replaced_bytes > kMaxResourceScopeBytes - staged_bytes) {
+        log_->e("B62DecoderImpl: merged resource scope is too large");
+        return false;
+    }
+    const size_t final_scope_bytes = existing_bytes - replaced_bytes + staged_bytes;
+    B62ResourceScope merged = existing != resource_scopes_.end()
+        ? existing->second
+        : B62ResourceScope{};
+    for (auto& [index, resource] : staged) {
+        merged[index] = std::move(resource);
+    }
+    resource_scopes_[resource_context.scope_id] = std::move(merged);
+    total_resource_bytes_ = total_resource_bytes_ - existing_bytes + final_scope_bytes;
+    resource_scope_order_.erase(
+        std::remove(resource_scope_order_.begin(), resource_scope_order_.end(), resource_context.scope_id),
+        resource_scope_order_.end());
+    resource_scope_order_.push_back(resource_context.scope_id);
+    active_resource_scope_id_ = resource_context.scope_id;
+    has_active_resource_scope_ = true;
+    return true;
+}
+
+void B62DecoderImpl::EraseResourceContext(uint64_t scope_id) {
+    auto scope = resource_scopes_.find(scope_id);
+    if (scope != resource_scopes_.end()) {
+        for (const auto& [index, resource] : scope->second) {
+            (void)index;
+            total_resource_bytes_ -= resource.data.size();
+        }
+        resource_scopes_.erase(scope);
+    }
+    resource_scope_order_.erase(
+        std::remove(resource_scope_order_.begin(), resource_scope_order_.end(), scope_id),
+        resource_scope_order_.end());
+    if (active_resource_scope_id_ == scope_id) {
+        active_resource_scope_id_ = 0;
+        has_active_resource_scope_ = false;
+    }
+}
+
+void B62DecoderImpl::EnforceResourceContextLimits(uint64_t protected_scope_id) {
+    while ((resource_scopes_.size() > kMaxResourceScopes ||
+            total_resource_bytes_ > kMaxTotalResourceBytes) &&
+           resource_scope_order_.size() > 1) {
+        uint64_t evict_id = resource_scope_order_.front();
+        resource_scope_order_.pop_front();
+        if (evict_id == protected_scope_id) {
+            resource_scope_order_.push_back(evict_id);
+            continue;
+        }
+        auto evict = resource_scopes_.find(evict_id);
+        if (evict == resource_scopes_.end()) {
+            continue;
+        }
+        for (const auto& [index, resource] : evict->second) {
+            (void)index;
+            total_resource_bytes_ -= resource.data.size();
+        }
+        resource_scopes_.erase(evict);
+    }
+}
+
+void B62DecoderImpl::ClearResourceContexts() {
+    resource_scopes_.clear();
+    resource_scope_order_.clear();
+    transient_resource_scope_.clear();
+    active_resource_scope_id_ = 0;
+    has_active_resource_scope_ = false;
+    total_resource_bytes_ = 0;
 }
 
 B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
@@ -970,7 +1464,28 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
                                        size_t length,
                                        const B62DecodeOptions& options,
                                        B62DecodeResult& out_result) {
+    if (options.discontinuity) {
+        Reset();
+    }
+    transient_resource_scope_.clear();
+    active_resource_scope_id_ = 0;
+    has_active_resource_scope_ = false;
+    return DecodeInternal(ttml_data, length, options, false, nullptr, out_result);
+}
+
+B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
+                                               size_t length,
+                                               const B62DecodeOptions& options,
+                                               bool preserve_document_layout,
+                                               B62PresentationMetadata* document_metadata,
+                                               B62DecodeResult& out_result) {
     out_result.captions.clear();
+    B62PresentationState& presentation_state = preserve_document_layout
+        ? document_presentation_state_
+        : legacy_presentation_state_;
+    if (document_metadata) {
+        *document_metadata = {};
+    }
     if (!ttml_data || length == 0) {
         log_->e("B62DecoderImpl: empty TTML document");
         return B62DecodeStatus::kError;
@@ -982,6 +1497,10 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     if (error != tinyxml2::XML_SUCCESS || !tt || LocalName(tt->Name()) != "tt") {
         log_->e("B62DecoderImpl: invalid TTML document: %s", document.ErrorStr());
         return B62DecodeStatus::kError;
+    }
+    B62PresentationMetadata parsed_metadata;
+    if (preserve_document_layout && document_metadata) {
+        CollectRubyAssociations(tt, parsed_metadata.ruby_associations);
     }
     const auto emit_clear = [&]() {
         Reset();
@@ -1001,6 +1520,151 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     const tinyxml2::XMLElement* body = FirstChild(tt, "body");
     if (!body) {
         return B62DecodeStatus::kNoCaption;
+    }
+
+    std::unordered_map<std::string, std::shared_ptr<const B62ResourceBlob>> embedded_images;
+    if (preserve_document_layout && document_metadata) {
+        std::vector<const tinyxml2::XMLElement*> image_elements;
+        CollectDescendants(tt, "image", image_elements);
+        for (const tinyxml2::XMLElement* image : image_elements) {
+            if (!IsSMPTEElement(image, "image")) {
+                continue;
+            }
+            const char* id = FindXMLID(image);
+            const char* payload = image->GetText();
+            std::string encoding = TrimASCII(FindAttribute(image, "encoding")
+                ? FindAttribute(image, "encoding") : "base64");
+            std::string image_type = TrimASCII(FindAttribute(image, "imageType")
+                ? FindAttribute(image, "imageType") : "png");
+            std::transform(encoding.begin(), encoding.end(), encoding.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            std::transform(image_type.begin(), image_type.end(), image_type.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (!id || !payload || encoding != "base64" || image_type != "png") {
+                continue;
+            }
+            auto bytes = DecodeBase64(payload);
+            if (!bytes) {
+                continue;
+            }
+            auto blob = std::make_shared<B62ResourceBlob>();
+            blob->scope_id = active_resource_scope_id_;
+            blob->index = std::numeric_limits<uint32_t>::max();
+            blob->kind = B62ResourceKind::kPNGImage;
+            blob->mime_type = "image/png";
+            blob->bytes = std::make_shared<const std::vector<uint8_t>>(std::move(*bytes));
+            embedded_images.emplace(id, std::move(blob));
+        }
+    }
+
+    std::unordered_map<uint64_t, std::shared_ptr<const B62ResourceBlob>> resolved_resource_cache;
+    const auto resolve_resource = [&](const char* uri_value,
+                                      B62ResourceKind kind) -> B62ResourceReference {
+        B62ResourceReference reference;
+        if (!uri_value) {
+            return reference;
+        }
+        reference.uri = TrimASCII(uri_value);
+        if (!reference.uri.empty() && reference.uri.front() == '#') {
+            auto embedded = embedded_images.find(reference.uri.substr(1));
+            if (embedded != embedded_images.end()) {
+                reference.resolved = embedded->second;
+            }
+            return reference;
+        }
+        auto index = ParseSubtResourceIndex(reference.uri);
+        if (!index || !has_active_resource_scope_) {
+            return reference;
+        }
+        const B62ResourceScope* scope = nullptr;
+        if (active_resource_scope_id_ == 0) {
+            scope = &transient_resource_scope_;
+        } else {
+            auto found_scope = resource_scopes_.find(active_resource_scope_id_);
+            if (found_scope != resource_scopes_.end()) {
+                scope = &found_scope->second;
+            }
+        }
+        if (!scope) {
+            return reference;
+        }
+        auto found_resource = scope->find(*index);
+        if (found_resource == scope->end()) {
+            return reference;
+        }
+        B62ResourceKind resolved_kind = kind;
+        if (resolved_kind == B62ResourceKind::kUnknown) {
+            if (found_resource->second.mime_type == "image/png") {
+                resolved_kind = B62ResourceKind::kPNGImage;
+            } else if (found_resource->second.mime_type == "image/svg+xml") {
+                resolved_kind = B62ResourceKind::kSVGImage;
+            }
+        }
+        const uint64_t cache_key = (static_cast<uint64_t>(resolved_kind) << 32) | *index;
+        auto cached = resolved_resource_cache.find(cache_key);
+        if (cached != resolved_resource_cache.end()) {
+            reference.resolved = cached->second;
+            return reference;
+        }
+        auto blob = std::make_shared<B62ResourceBlob>();
+        blob->scope_id = active_resource_scope_id_;
+        blob->index = *index;
+        blob->kind = resolved_kind;
+        blob->mime_type = found_resource->second.mime_type;
+        blob->bytes = std::make_shared<const std::vector<uint8_t>>(found_resource->second.data);
+        reference.resolved = blob;
+        resolved_resource_cache.emplace(cache_key, std::move(blob));
+        return reference;
+    };
+
+    if (preserve_document_layout && document_metadata) {
+        std::vector<const tinyxml2::XMLElement*> font_face_elements;
+        CollectDescendants(tt, "font-face", font_face_elements);
+        for (const tinyxml2::XMLElement* font_face_element : font_face_elements) {
+            if (!IsARIBElement(font_face_element, "font-face")) {
+                continue;
+            }
+            const char* family = FindAttribute(font_face_element, "font-family");
+            if (!family || TrimASCII(family).empty()) {
+                continue;
+            }
+            B62FontFace font_face;
+            if (const char* id = FindXMLID(font_face_element)) {
+                font_face.id = id;
+            }
+            font_face.family = TrimASCII(family);
+            if (const char* unicode_range = FindAttribute(font_face_element, "unicode-range")) {
+                font_face.unicode_range = TrimASCII(unicode_range);
+            }
+            for (const tinyxml2::XMLElement* source = font_face_element->FirstChildElement();
+                 source; source = source->NextSiblingElement()) {
+                if (!IsARIBElement(source, "src")) {
+                    continue;
+                }
+                const char* uri = FindAttribute(source, "url");
+                if (!uri) {
+                    continue;
+                }
+                B62FontSource font_source;
+                std::string format = TrimASCII(FindAttribute(source, "format")
+                    ? FindAttribute(source, "format") : "");
+                std::transform(format.begin(), format.end(), format.begin(),
+                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                B62ResourceKind resource_kind = B62ResourceKind::kUnknown;
+                if (format == "svg") {
+                    font_source.format = B62FontFormat::kSVG;
+                    resource_kind = B62ResourceKind::kSVGFont;
+                } else if (format == "woff") {
+                    font_source.format = B62FontFormat::kWOFF;
+                    resource_kind = B62ResourceKind::kWOFFFont;
+                }
+                font_source.resource = resolve_resource(uri, resource_kind);
+                font_face.sources.push_back(std::move(font_source));
+            }
+            if (!font_face.sources.empty()) {
+                parsed_metadata.font_faces.push_back(std::move(font_face));
+            }
+        }
     }
 
     std::array<int, 2> plane{3840, 2160};
@@ -1078,7 +1742,73 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         }
         raw_cues.push_back(cue);
     }
-    if (raw_cues.empty()) {
+    std::vector<const tinyxml2::XMLElement*> audio_elements;
+    CollectDescendants(body, "audio", audio_elements);
+    std::vector<RawAudioCue> raw_audio_cues;
+    for (const tinyxml2::XMLElement* audio : audio_elements) {
+        if (!IsARIBElement(audio, "audio") || !FindAttribute(audio, "src")) {
+            continue;
+        }
+        RawAudioCue cue;
+        cue.node = audio;
+        for (const tinyxml2::XMLNode* node = audio->Parent(); node; node = node->Parent()) {
+            const tinyxml2::XMLElement* element = node->ToElement();
+            if (!element) {
+                continue;
+            }
+            std::string_view name = LocalName(element->Name());
+            if (name == "p" || name == "div") {
+                cue.owner = element;
+                break;
+            }
+        }
+        const tinyxml2::XMLElement* timing_node = FindNearestTimedNode(audio);
+        cue.start = ParseTime(FindAttribute(timing_node, "begin"));
+        bool indefinite_end = false;
+        cue.end = ParseTime(FindAttribute(timing_node, "end"), &indefinite_end);
+        bool indefinite_duration = false;
+        std::optional<int64_t> duration = ParseTime(
+            FindAttribute(timing_node, "dur"), &indefinite_duration);
+        cue.indefinite = indefinite_end || indefinite_duration;
+        if (!cue.end && duration && cue.start) {
+            cue.end = *cue.start + *duration;
+        }
+        if (cue.start && (!minimum_start || *cue.start < *minimum_start)) {
+            minimum_start = cue.start;
+        }
+        raw_audio_cues.push_back(std::move(cue));
+    }
+    std::vector<const tinyxml2::XMLElement*> background_owners;
+    CollectDescendants(body, "div", background_owners);
+    background_owners.insert(background_owners.end(), paragraphs.begin(), paragraphs.end());
+    std::vector<RawBackgroundImage> raw_background_images;
+    for (const tinyxml2::XMLElement* owner : background_owners) {
+        const char* source = FindNamespacedAttribute(
+            owner, "backgroundImage",
+            "http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt");
+        if (!source) {
+            continue;
+        }
+        RawBackgroundImage image;
+        image.owner = owner;
+        image.source = source;
+        const tinyxml2::XMLElement* timing_node = FindNearestTimedNode(owner);
+        image.start = ParseTime(FindAttribute(timing_node, "begin"));
+        bool indefinite_end = false;
+        image.end = ParseTime(FindAttribute(timing_node, "end"), &indefinite_end);
+        bool indefinite_duration = false;
+        std::optional<int64_t> duration = ParseTime(
+            FindAttribute(timing_node, "dur"), &indefinite_duration);
+        image.indefinite = indefinite_end || indefinite_duration;
+        if (!image.end && duration && image.start) {
+            image.end = *image.start + *duration;
+        }
+        if (image.start && (!minimum_start || *image.start < *minimum_start)) {
+            minimum_start = image.start;
+        }
+        raw_background_images.push_back(std::move(image));
+    }
+    if (raw_cues.empty() && raw_audio_cues.empty() && raw_background_images.empty()) {
         return B62DecodeStatus::kNoCaption;
     }
 
@@ -1091,8 +1821,51 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     }
     uint32_t language = ParseLanguage(FindAttribute(tt, "lang"));
 
+    if (preserve_document_layout && document_metadata) {
+        for (const RawAudioCue& raw_audio : raw_audio_cues) {
+            B62AudioCue audio;
+            audio.owner_type = ElementType(raw_audio.owner);
+            if (const char* owner_id = FindXMLID(raw_audio.owner)) {
+                audio.owner_id = owner_id;
+            }
+            if (const char* id = FindXMLID(raw_audio.node)) {
+                audio.id = id;
+            }
+            audio.source = resolve_resource(FindAttribute(raw_audio.node, "src"),
+                                             B62ResourceKind::kAudio);
+            const char* loop = FindAttribute(raw_audio.node, "loop");
+            audio.loop = loop && (std::strcmp(loop, "true") == 0 || std::strcmp(loop, "1") == 0);
+            audio.begin_pts = raw_audio.start
+                ? *raw_audio.start + timeline_offset
+                : options.document_pts;
+            if (raw_audio.end) {
+                audio.end_pts = *raw_audio.end + timeline_offset;
+            } else if (!raw_audio.indefinite && audio.begin_pts != PTS_NOPTS) {
+                audio.end_pts = audio.begin_pts + 5000;
+            }
+            parsed_metadata.audio_cues.push_back(std::move(audio));
+        }
+        for (const RawBackgroundImage& raw_image : raw_background_images) {
+            B62BackgroundImage image;
+            image.owner_type = ElementType(raw_image.owner);
+            if (const char* owner_id = FindXMLID(raw_image.owner)) {
+                image.owner_id = owner_id;
+            }
+            image.source = resolve_resource(raw_image.source, B62ResourceKind::kUnknown);
+            image.begin_pts = raw_image.start
+                ? *raw_image.start + timeline_offset
+                : options.document_pts;
+            if (raw_image.end) {
+                image.end_pts = *raw_image.end + timeline_offset;
+            } else if (!raw_image.indefinite && image.begin_pts != PTS_NOPTS) {
+                image.end_pts = image.begin_pts + 5000;
+            }
+            parsed_metadata.background_images.push_back(std::move(image));
+        }
+    }
+
     if (options.operation_mode != B62OperationMode::kLive || options.discontinuity) {
-        presentation_state_.Reset();
+        presentation_state.Reset();
     }
 
     bool continuation_applied = false;
@@ -1103,7 +1876,7 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
             if (raw.end) {
                 end = *raw.end + timeline_offset;
             }
-            continuation_applied = presentation_state_.ApplyContinuation(
+            continuation_applied = presentation_state.ApplyContinuation(
                 raw.id, end, !raw.indefinite) || continuation_applied;
         }
     }
@@ -1119,17 +1892,27 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         definition.y = plane[1] * 78 / 100;
         definition.width = plane[0] * 8 / 10;
         definition.height = plane[1] * 16 / 100;
+        bool has_paragraph_region = false;
         const char* region_id = FindNearestAttribute(raw.node, "region");
         if (region_id) {
             if (auto it = region_definitions.find(region_id); it != region_definitions.end()) {
                 definition = it->second;
+                has_paragraph_region = true;
             }
         }
         Style inherited = CollectInheritedStyle(raw.node, definition.style, style_nodes, style_cache);
         definition.style = inherited;
+        RegionDefinition paragraph_formatting = preserve_document_layout
+            ? MakeFormattingDefinition(definition, inherited)
+            : definition;
         std::vector<InlineSpan> spans;
-        AppendInlineSpans(raw.node, inherited, style_nodes, style_cache, spans);
-        ResolveRuby(spans);
+        AppendInlineSpans(raw.node, inherited, style_nodes, style_cache, spans,
+                          preserve_document_layout ? &region_definitions : nullptr,
+                          preserve_document_layout ? &definition : nullptr,
+                          preserve_document_layout && HasARIBRubyAncestor(raw.node));
+        if (!preserve_document_layout) {
+            ResolveRuby(spans);
+        }
         if (spans.empty()) {
             continue;
         }
@@ -1143,14 +1926,54 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
             ? options.document_pts
             : (raw.start ? *raw.start + timeline_offset : options.document_pts);
         for (const InlineSpan& span : spans) {
-            caption.text += span.text;
+            if (!preserve_document_layout || !span.is_ruby) {
+                caption.text += span.text;
+            }
         }
 
-        std::string writing_mode = StyleValue(definition.style, "writingMode");
-        if (writing_mode == "tbrl" || writing_mode == "tb-rl" || writing_mode == "tblr" || writing_mode == "tb-lr") {
-            LayoutVertical(spans, definition, plane, caption);
+        const auto layout = [&](const std::vector<InlineSpan>& layout_spans,
+                                const RegionDefinition& layout_definition,
+                                const RegionDefinition& clip_definition,
+                                bool preserve_region_bounds) {
+            if (IsVerticalWritingMode(layout_definition.style)) {
+                LayoutVertical(layout_spans, layout_definition, clip_definition,
+                               plane, caption, preserve_region_bounds);
+            } else {
+                LayoutHorizontal(layout_spans, layout_definition, clip_definition,
+                                 plane, caption, preserve_region_bounds);
+            }
+        };
+        if (preserve_document_layout) {
+            struct SpanFlow {
+                const RegionDefinition* definition = nullptr;
+                bool explicit_position = false;
+                std::vector<InlineSpan> spans;
+            };
+            std::vector<SpanFlow> flows;
+            for (const InlineSpan& span : spans) {
+                if (flows.empty() || span.resets_position) {
+                    flows.push_back({span.region ? span.region : &definition,
+                                     span.resets_position, {}});
+                }
+                flows.back().spans.push_back(span);
+            }
+            for (const SpanFlow& flow : flows) {
+                RegionDefinition formatting = MakeFormattingDefinition(
+                    *flow.definition, flow.spans.front().style);
+                if (flow.explicit_position) {
+                    // A span region origin is the operation-position reference
+                    // point of its first character, not an alignment box.
+                    formatting.style["textAlign"] = "start";
+                    formatting.style["displayAlign"] = "before";
+                }
+                const RegionDefinition& clip = has_paragraph_region
+                    ? paragraph_formatting
+                    : formatting;
+                layout(flow.spans, formatting, clip, true);
+            }
+            MergeCaptionRegionsWithSameClip(caption);
         } else {
-            LayoutHorizontal(spans, definition, plane, caption);
+            layout(spans, definition, definition, false);
         }
         if (!caption.regions.empty()) {
             B62PresentationNode node;
@@ -1175,28 +1998,144 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
     presentation.plane_width = plane[0];
     presentation.plane_height = plane[1];
     presentation.language = language;
+    presentation.metadata = std::move(parsed_metadata);
     presentation.nodes = std::move(document_nodes);
+    const bool has_presentation_content = !presentation.nodes.empty() ||
+        !presentation.metadata.audio_cues.empty() ||
+        !presentation.metadata.background_images.empty();
 
     if (options.operation_mode == B62OperationMode::kLive) {
-        if (!presentation.nodes.empty()) {
-            presentation_state_.Commit(std::move(presentation));
+        if (has_presentation_content) {
+            presentation_state.Commit(std::move(presentation));
         } else if (!continuation_applied) {
             return B62DecodeStatus::kNoCaption;
         }
-        presentation_state_.Prune(options.document_pts);
-        presentation_state_.BuildScenes(
-            options.document_pts, kMaxPresentationEvents, out_result.captions);
+        presentation_state.Prune(options.document_pts);
+        presentation_state.BuildScenes(
+            options.document_pts, kMaxPresentationEvents, out_result.captions,
+            document_metadata);
     } else {
-        if (presentation.nodes.empty()) {
+        if (!has_presentation_content) {
             return B62DecodeStatus::kNoCaption;
         }
         B62PresentationState document_state;
         document_state.Commit(std::move(presentation));
         document_state.BuildScenes(
-            options.document_pts, kMaxPresentationEvents, out_result.captions);
+            options.document_pts, kMaxPresentationEvents, out_result.captions,
+            document_metadata);
     }
 
     return out_result.captions.empty() ? B62DecodeStatus::kNoCaption : B62DecodeStatus::kGotCaption;
+}
+
+B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
+                                       size_t length,
+                                       const B62DecodeOptions& options,
+                                       const B62ResourceContextView& resource_context,
+                                       B62DecodeResult& out_result) {
+    return DecodeWithResourceContext(ttml_data, length, options, resource_context,
+                                     false, nullptr, out_result);
+}
+
+B62DecodeStatus B62DecoderImpl::DecodeDocument(
+    const uint8_t* ttml_data,
+    size_t length,
+    const B62DecodeOptions& options,
+    const B62ResourceContextView& resource_context,
+    B62DocumentDecodeResult& out_result) {
+    B62DecodeResult legacy_result;
+    B62PresentationMetadata document_metadata;
+    out_result.captions.clear();
+    out_result.sidecar.reset();
+    B62DecodeStatus status = DecodeWithResourceContext(
+        ttml_data, length, options, resource_context, true,
+        &document_metadata, legacy_result);
+    out_result.captions = std::move(legacy_result.captions);
+    if (status == B62DecodeStatus::kGotCaption) {
+        out_result.sidecar = std::shared_ptr<const B62DocumentSidecar>(
+            new B62DocumentSidecar(std::move(document_metadata.ruby_associations),
+                                   std::move(document_metadata.font_faces),
+                                   std::move(document_metadata.audio_cues),
+                                   std::move(document_metadata.background_images)));
+    }
+    return status;
+}
+
+B62DecodeStatus B62DecoderImpl::DecodeWithResourceContext(
+    const uint8_t* ttml_data,
+    size_t length,
+    const B62DecodeOptions& options,
+    const B62ResourceContextView& resource_context,
+    bool preserve_document_layout,
+    B62PresentationMetadata* document_metadata,
+    B62DecodeResult& out_result) {
+    if (options.discontinuity) {
+        Reset();
+    }
+    const uint64_t previous_active_scope_id = active_resource_scope_id_;
+    const bool previous_has_active_scope = has_active_resource_scope_;
+    const size_t previous_total_resource_bytes = total_resource_bytes_;
+    const std::deque<uint64_t> previous_scope_order = resource_scope_order_;
+    B62ResourceScope previous_scope;
+    B62ResourceScope previous_transient_scope;
+    bool had_previous_scope = false;
+    if (resource_context.scope_id == 0) {
+        previous_transient_scope = transient_resource_scope_;
+    } else {
+        auto existing = resource_scopes_.find(resource_context.scope_id);
+        if (existing != resource_scopes_.end()) {
+            previous_scope = existing->second;
+            had_previous_scope = true;
+        }
+    }
+    const auto restore_resources = [&]() {
+        if (resource_context.scope_id == 0) {
+            transient_resource_scope_ = std::move(previous_transient_scope);
+        } else if (had_previous_scope) {
+            resource_scopes_[resource_context.scope_id] = std::move(previous_scope);
+        } else {
+            resource_scopes_.erase(resource_context.scope_id);
+        }
+        resource_scope_order_ = previous_scope_order;
+        active_resource_scope_id_ = previous_active_scope_id;
+        has_active_resource_scope_ = previous_has_active_scope;
+        total_resource_bytes_ = previous_total_resource_bytes;
+    };
+#if defined(__cpp_exceptions)
+    B62PresentationState previous_presentation_state = preserve_document_layout
+        ? document_presentation_state_
+        : legacy_presentation_state_;
+    try {
+#endif
+    if (!StoreResourceContext(resource_context)) {
+        restore_resources();
+        out_result.captions.clear();
+        if (document_metadata) {
+            *document_metadata = {};
+        }
+        return B62DecodeStatus::kError;
+    }
+    B62DecodeStatus status = DecodeInternal(
+        ttml_data, length, options, preserve_document_layout, document_metadata, out_result);
+    if (resource_context.scope_id == 0) {
+        restore_resources();
+    } else if (status == B62DecodeStatus::kError) {
+        restore_resources();
+    } else {
+        EnforceResourceContextLimits(resource_context.scope_id);
+    }
+    return status;
+#if defined(__cpp_exceptions)
+    } catch (...) {
+        restore_resources();
+        if (preserve_document_layout) {
+            document_presentation_state_ = std::move(previous_presentation_state);
+        } else {
+            legacy_presentation_state_ = std::move(previous_presentation_state);
+        }
+        throw;
+    }
+#endif
 }
 
 }  // namespace aribcaption::internal

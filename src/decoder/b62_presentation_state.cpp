@@ -66,6 +66,18 @@ void B62PresentationState::Commit(B62Presentation presentation) {
                 presentation.start = node.start;
             }
         }
+        for (const B62AudioCue& audio : presentation.metadata.audio_cues) {
+            if (audio.begin_pts != PTS_NOPTS &&
+                (presentation.start == PTS_NOPTS || audio.begin_pts < presentation.start)) {
+                presentation.start = audio.begin_pts;
+            }
+        }
+        for (const B62BackgroundImage& image : presentation.metadata.background_images) {
+            if (image.begin_pts != PTS_NOPTS &&
+                (presentation.start == PTS_NOPTS || image.begin_pts < presentation.start)) {
+                presentation.start = image.begin_pts;
+            }
+        }
     }
     if (presentation.start == PTS_NOPTS) {
         return;
@@ -111,8 +123,12 @@ void B62PresentationState::Prune(int64_t current_pts) {
 
 void B62PresentationState::BuildScenes(int64_t current_pts,
                                        size_t max_events,
-                                       std::vector<Caption>& out_captions) const {
+                                       std::vector<Caption>& out_captions,
+                                       B62PresentationMetadata* out_metadata) const {
     out_captions.clear();
+    if (out_metadata) {
+        *out_metadata = {};
+    }
     if (presentations_.empty() || max_events == 0) {
         return;
     }
@@ -132,6 +148,26 @@ void B62PresentationState::BuildScenes(int64_t current_pts,
                 boundaries.push_back(*node.end);
             }
         }
+        for (const B62AudioCue& audio : presentation.metadata.audio_cues) {
+            if (audio.begin_pts != PTS_NOPTS && audio.begin_pts >= presentation.start &&
+                audio.begin_pts < next_start) {
+                boundaries.push_back(audio.begin_pts);
+            }
+            if (audio.end_pts && *audio.end_pts >= presentation.start &&
+                *audio.end_pts < next_start) {
+                boundaries.push_back(*audio.end_pts);
+            }
+        }
+        for (const B62BackgroundImage& image : presentation.metadata.background_images) {
+            if (image.begin_pts != PTS_NOPTS && image.begin_pts >= presentation.start &&
+                image.begin_pts < next_start) {
+                boundaries.push_back(image.begin_pts);
+            }
+            if (image.end_pts && *image.end_pts >= presentation.start &&
+                *image.end_pts < next_start) {
+                boundaries.push_back(*image.end_pts);
+            }
+        }
     }
     std::sort(boundaries.begin(), boundaries.end());
     boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
@@ -144,6 +180,7 @@ void B62PresentationState::BuildScenes(int64_t current_pts,
         }
     }
     const size_t last_boundary = std::min(boundaries.size(), first_boundary + max_events);
+    std::vector<uint64_t> emitted_metadata_events;
     for (size_t boundary_index = first_boundary; boundary_index < last_boundary; ++boundary_index) {
         const int64_t pts = boundaries[boundary_index];
         const B62Presentation* selected = nullptr;
@@ -155,6 +192,36 @@ void B62PresentationState::BuildScenes(int64_t current_pts,
         }
         if (!selected) {
             continue;
+        }
+        if (out_metadata &&
+            std::find(emitted_metadata_events.begin(), emitted_metadata_events.end(),
+                      selected->event_id) == emitted_metadata_events.end()) {
+            emitted_metadata_events.push_back(selected->event_id);
+            for (const B62RubyAssociation& association : selected->metadata.ruby_associations) {
+                const bool exists = std::any_of(
+                    out_metadata->ruby_associations.begin(), out_metadata->ruby_associations.end(),
+                    [&](const B62RubyAssociation& current) {
+                        return current.annotation_type == association.annotation_type &&
+                               current.target_type == association.target_type &&
+                               current.annotation_id == association.annotation_id &&
+                               current.target_id == association.target_id &&
+                               current.annotation_text == association.annotation_text &&
+                               current.target_text == association.target_text;
+                    });
+                if (!exists) {
+                    out_metadata->ruby_associations.push_back(association);
+                }
+            }
+            out_metadata->font_faces.insert(out_metadata->font_faces.end(),
+                                             selected->metadata.font_faces.begin(),
+                                             selected->metadata.font_faces.end());
+            out_metadata->audio_cues.insert(out_metadata->audio_cues.end(),
+                                            selected->metadata.audio_cues.begin(),
+                                            selected->metadata.audio_cues.end());
+            out_metadata->background_images.insert(
+                out_metadata->background_images.end(),
+                selected->metadata.background_images.begin(),
+                selected->metadata.background_images.end());
         }
 
         Caption scene;
