@@ -24,6 +24,7 @@
 #include "decoder/b62_document_model.hpp"
 #include "decoder/b62_layout.hpp"
 #include "decoder/b62_resource_resolver.hpp"
+#include "decoder/b62_style_context.hpp"
 #include "decoder/b62_text_util.hpp"
 #include "decoder/b62_time.hpp"
 #include "decoder/b62_xml.hpp"
@@ -55,22 +56,6 @@ struct RawBackgroundImage {
     std::optional<int64_t> end;
     bool indefinite = false;
 };
-
-bool HasARIBRubyAncestor(const tinyxml2::XMLElement* element) {
-    for (const tinyxml2::XMLNode* node = element; node; node = node->Parent()) {
-        const tinyxml2::XMLElement* current = node->ToElement();
-        if (!current) {
-            continue;
-        }
-        if (B62FindARIBAttribute(current, "ruby")) {
-            return true;
-        }
-        if (B62LocalName(current->Name()) == "tt") {
-            break;
-        }
-    }
-    return false;
-}
 
 void AppendElementText(const tinyxml2::XMLNode* parent, std::string& output) {
     for (const tinyxml2::XMLNode* child = parent ? parent->FirstChild() : nullptr;
@@ -151,218 +136,6 @@ void CollectRubyAssociations(const tinyxml2::XMLElement* tt,
         }
         associations.push_back(std::move(association));
     }
-}
-
-void ApplyStyleAttributes(const tinyxml2::XMLElement* element, B62Style& style) {
-    static constexpr std::array<std::string_view, 21> kStyleAttributes = {
-        "fontSize",     "lineHeight", "fontWeight",     "fontStyle",   "color",       "backgroundColor",
-        "displayAlign", "textAlign",  "textDecoration", "textOutline", "textShadow",  "writingMode", "direction",
-        "opacity",      "border",     "border-top",     "border-bottom", "border-left", "border-right",
-        "letter-spacing", "text-shadow",
-    };
-    for (std::string_view name : kStyleAttributes) {
-        if (const char* value = B62FindAttribute(element, name)) {
-            std::string key(name);
-            if (key == "letter-spacing") {
-                key = "letterSpacing";
-            } else if (key == "text-shadow") {
-                key = "textShadow";
-            }
-            style[key] = value;
-        }
-    }
-}
-
-B62Style ResolveStyleReference(const std::string& id,
-                            const std::unordered_map<std::string, const tinyxml2::XMLElement*>& nodes,
-                            std::unordered_map<std::string, B62Style>& cache,
-                            std::vector<std::string>& resolving);
-
-void ApplyStyleReferences(const tinyxml2::XMLElement* element,
-                          const std::unordered_map<std::string, const tinyxml2::XMLElement*>& nodes,
-                          std::unordered_map<std::string, B62Style>& cache,
-                          std::vector<std::string>& resolving,
-                          B62Style& style) {
-    const char* refs = B62FindAttribute(element, "style");
-    if (!refs) {
-        return;
-    }
-    std::string list(refs);
-    size_t position = 0;
-    while (position < list.size()) {
-        position = list.find_first_not_of(" \t\r\n", position);
-        if (position == std::string::npos) {
-            break;
-        }
-        size_t end = list.find_first_of(" \t\r\n", position);
-        B62Style referenced = ResolveStyleReference(list.substr(position, end - position), nodes, cache, resolving);
-        for (const auto& [key, value] : referenced) {
-            style[key] = value;
-        }
-        position = end == std::string::npos ? list.size() : end;
-    }
-}
-
-B62Style ResolveStyleReference(const std::string& id,
-                            const std::unordered_map<std::string, const tinyxml2::XMLElement*>& nodes,
-                            std::unordered_map<std::string, B62Style>& cache,
-                            std::vector<std::string>& resolving) {
-    if (auto it = cache.find(id); it != cache.end()) {
-        return it->second;
-    }
-    if (std::find(resolving.begin(), resolving.end(), id) != resolving.end()) {
-        return {};
-    }
-    auto node = nodes.find(id);
-    if (node == nodes.end()) {
-        return {};
-    }
-    resolving.push_back(id);
-    B62Style style;
-    ApplyStyleReferences(node->second, nodes, cache, resolving, style);
-    ApplyStyleAttributes(node->second, style);
-    resolving.pop_back();
-    cache[id] = style;
-    return style;
-}
-
-B62Style MergeNodeStyle(const tinyxml2::XMLElement* element,
-                     B62Style base,
-                     const std::unordered_map<std::string, const tinyxml2::XMLElement*>& style_nodes,
-                     std::unordered_map<std::string, B62Style>& style_cache) {
-    std::vector<std::string> resolving;
-    ApplyStyleReferences(element, style_nodes, style_cache, resolving, base);
-    ApplyStyleAttributes(element, base);
-    return base;
-}
-
-B62Style CollectInheritedStyle(const tinyxml2::XMLElement* element,
-                            const B62Style& region_style,
-                            const std::unordered_map<std::string, const tinyxml2::XMLElement*>& style_nodes,
-                            std::unordered_map<std::string, B62Style>& style_cache) {
-    std::vector<const tinyxml2::XMLElement*> ancestors;
-    for (const tinyxml2::XMLNode* node = element; node; node = node->Parent()) {
-        const tinyxml2::XMLElement* current = node->ToElement();
-        if (!current) {
-            continue;
-        }
-        std::string_view name = B62LocalName(current->Name());
-        if (name == "body" || name == "div" || name == "p" || name == "span") {
-            ancestors.push_back(current);
-        }
-        if (name == "tt") {
-            break;
-        }
-    }
-    B62Style result = region_style;
-    for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it) {
-        result = MergeNodeStyle(*it, std::move(result), style_nodes, style_cache);
-    }
-    return result;
-}
-
-void AppendInlineSpans(const tinyxml2::XMLElement* parent,
-                       const B62Style& inherited_style,
-                       const std::unordered_map<std::string, const tinyxml2::XMLElement*>& style_nodes,
-                       std::unordered_map<std::string, B62Style>& style_cache,
-                       std::vector<B62InlineSpan>& spans,
-                       const std::unordered_map<std::string, B62RegionDefinition>* region_definitions,
-                       const B62RegionDefinition* inherited_region,
-                       bool inherited_is_ruby) {
-    for (const tinyxml2::XMLNode* child = parent->FirstChild(); child; child = child->NextSibling()) {
-        if (const tinyxml2::XMLText* text = child->ToText()) {
-            std::string normalized = B62NormalizeText(text->Value());
-            if (!normalized.empty()) {
-                B62InlineSpan span;
-                span.text = std::move(normalized);
-                span.style = inherited_style;
-                span.region = inherited_region;
-                span.is_ruby = inherited_is_ruby;
-                spans.push_back(std::move(span));
-            }
-            continue;
-        }
-        const tinyxml2::XMLElement* element = child->ToElement();
-        if (!element) {
-            continue;
-        }
-        std::string_view name = B62LocalName(element->Name());
-        if (name == "br") {
-            B62InlineSpan span;
-            span.text = "\n";
-            span.style = inherited_style;
-            span.region = inherited_region;
-            span.is_ruby = inherited_is_ruby;
-            spans.push_back(std::move(span));
-            continue;
-        }
-        if (name != "span") {
-            AppendInlineSpans(element, inherited_style, style_nodes, style_cache, spans,
-                              region_definitions, inherited_region, inherited_is_ruby);
-            continue;
-        }
-
-        const B62RegionDefinition* region = inherited_region;
-        B62Style region_style = inherited_style;
-        bool resets_position = false;
-        if (region_definitions) {
-            if (const char* region_id = B62FindAttribute(element, "region")) {
-                auto resolved = region_definitions->find(region_id);
-                if (resolved != region_definitions->end()) {
-                    region = &resolved->second;
-                    resets_position = true;
-                    for (const auto& [key, value] : region->style) {
-                        region_style[key] = value;
-                    }
-                }
-            }
-        }
-        B62Style style = MergeNodeStyle(element, std::move(region_style), style_nodes, style_cache);
-        const bool is_ruby = inherited_is_ruby ||
-            (region_definitions && B62FindARIBAttribute(element, "ruby") != nullptr);
-        size_t begin = spans.size();
-        AppendInlineSpans(element, style, style_nodes, style_cache, spans,
-                          region_definitions, region, is_ruby);
-        if (resets_position && begin < spans.size()) {
-            spans[begin].resets_position = true;
-        }
-        const char* id = B62FindAttribute(element, "id");
-        const char* ruby = B62FindAttribute(element, "ruby");
-        for (size_t i = begin; i < spans.size(); i++) {
-            if (id && spans[i].id.empty()) {
-                spans[i].id = id;
-            }
-            if (ruby && spans[i].ruby_target_id.empty()) {
-                spans[i].ruby_target_id = ruby;
-            }
-        }
-    }
-}
-
-void ResolveRuby(std::vector<B62InlineSpan>& spans) {
-    std::unordered_map<std::string, size_t> by_id;
-    for (size_t i = 0; i < spans.size(); i++) {
-        if (!spans[i].id.empty() && spans[i].ruby_target_id.empty() && !by_id.count(spans[i].id)) {
-            by_id[spans[i].id] = i;
-        }
-    }
-    for (size_t i = 0; i < spans.size(); i++) {
-        if (!spans[i].ruby_target_id.empty()) {
-            auto target = by_id.find(spans[i].ruby_target_id);
-            if (target != by_id.end()) {
-                spans[target->second].ruby_text += spans[i].text;
-            }
-        }
-    }
-    std::vector<B62InlineSpan> resolved;
-    resolved.reserve(spans.size());
-    for (size_t i = 0; i < spans.size(); i++) {
-        if (!spans[i].ruby_target_id.empty() && by_id.count(spans[i].ruby_target_id)) {
-            continue;
-        }
-        resolved.push_back(std::move(spans[i]));
-    }
-    spans = std::move(resolved);
 }
 
 uint32_t ParseLanguage(const char* value) {
@@ -532,40 +305,8 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         plane = *extent;
     }
 
-    std::vector<const tinyxml2::XMLElement*> style_elements;
-    B62CollectDescendants(tt, "style", style_elements);
-    std::unordered_map<std::string, const tinyxml2::XMLElement*> style_nodes;
-    for (const tinyxml2::XMLElement* style : style_elements) {
-        if (const char* id = B62FindAttribute(style, "id")) {
-            style_nodes[id] = style;
-        }
-    }
-    std::unordered_map<std::string, B62Style> style_cache;
-
-    std::vector<const tinyxml2::XMLElement*> region_elements;
-    B62CollectDescendants(tt, "region", region_elements);
-    std::unordered_map<std::string, B62RegionDefinition> region_definitions;
-    for (const tinyxml2::XMLElement* region : region_elements) {
-        const char* id = B62FindAttribute(region, "id");
-        if (!id) {
-            continue;
-        }
-        B62RegionDefinition definition;
-        definition.x = plane[0] / 10;
-        definition.y = plane[1] * 78 / 100;
-        definition.width = plane[0] * 8 / 10;
-        definition.height = plane[1] * 16 / 100;
-        if (auto origin = B62ParseLengthPair(B62FindAttribute(region, "origin"), plane)) {
-            definition.x = (*origin)[0];
-            definition.y = (*origin)[1];
-        }
-        if (auto extent = B62ParseLengthPair(B62FindAttribute(region, "extent"), plane)) {
-            definition.width = (*extent)[0];
-            definition.height = (*extent)[1];
-        }
-        definition.style = MergeNodeStyle(region, {}, style_nodes, style_cache);
-        region_definitions[id] = std::move(definition);
-    }
+    B62StyleContext style_context(tt, plane);
+    const auto& region_definitions = style_context.regions();
 
     std::vector<const tinyxml2::XMLElement*> paragraphs;
     B62CollectDescendants(body, "p", paragraphs);
@@ -771,18 +512,21 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
                 has_paragraph_region = true;
             }
         }
-        B62Style inherited = CollectInheritedStyle(raw.node, definition.style, style_nodes, style_cache);
+        B62Style inherited = style_context.CollectInheritedStyle(
+            raw.node, definition.style);
         definition.style = inherited;
         B62RegionDefinition paragraph_formatting = preserve_document_layout
             ? B62MakeFormattingDefinition(definition, inherited)
             : definition;
         std::vector<B62InlineSpan> spans;
-        AppendInlineSpans(raw.node, inherited, style_nodes, style_cache, spans,
-                          preserve_document_layout ? &region_definitions : nullptr,
-                          preserve_document_layout ? &definition : nullptr,
-                          preserve_document_layout && HasARIBRubyAncestor(raw.node));
+        style_context.AppendInlineSpans(
+            raw.node, inherited, spans,
+            preserve_document_layout ? &definition : nullptr,
+            preserve_document_layout,
+            preserve_document_layout &&
+                B62StyleContext::HasARIBRubyAncestor(raw.node));
         if (!preserve_document_layout) {
-            ResolveRuby(spans);
+            B62StyleContext::ResolveLegacyRuby(spans);
         }
         if (spans.empty()) {
             continue;

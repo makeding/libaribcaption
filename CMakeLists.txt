@@ -219,6 +219,8 @@ add_library(aribcaption
         src/decoder/b62_resource_resolver.hpp
         src/decoder/b62_resource_store.cpp
         src/decoder/b62_resource_store.hpp
+        src/decoder/b62_style_context.cpp
+        src/decoder/b62_style_context.hpp
         src/decoder/b62_text_util.cpp
         src/decoder/b62_text_util.hpp
         src/decoder/b62_time.cpp

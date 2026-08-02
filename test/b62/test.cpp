@@ -166,6 +166,36 @@ constexpr char kHeadOnlyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml">
   <head><metadata/></head>
 </tt>)TTML";
 
+constexpr char kCyclicStyleTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling">
+  <head><styling>
+    <style xml:id="a" style="b" tts:color="#ff0000"/>
+    <style xml:id="b" style="a" tts:fontSize="80px"/>
+    <style xml:id="c" style="a b"/>
+  </styling></head>
+  <body><div><p begin="0s" end="1s" style="c">cycle</p></div></body>
+</tt>)TTML";
+
+constexpr char kStaticMetadataOnlyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:arib-tt="urn:arib:ttml:profile:B62:extension">
+  <head><metadata>
+    <arib-tt:font-face xml:id="unused" font-family="Unused">
+      <arib-tt:src url="subt://1" format="woff"/>
+    </arib-tt:font-face>
+  </metadata></head>
+  <body/>
+</tt>)TTML";
+
+constexpr char kNonTextEarliestTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:arib-tt="urn:arib:ttml:profile:B62:extension"
+    xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt">
+  <body><div>
+    <div begin="1s" end="2s" smpte:backgroundImage="subt://2"/>
+    <div begin="2s" end="3s"><arib-tt:audio src="subt://3"/></div>
+    <p begin="10s" end="11s">aligned by metadata</p>
+  </div></body>
+</tt>)TTML";
+
 }  // namespace
 
 int main() {
@@ -204,6 +234,19 @@ int main() {
     assert(result.captions[0].regions[0].chars[0].enclosure_color.u32 == aribcaption::ColorRGBA(0, 0, 0).u32);
     assert(result.captions[0].regions[0].chars[0].enclosure_thickness == 3);
     assert(result.captions[0].regions[1].is_ruby);
+
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kCyclicStyleTTML),
+                            std::strlen(kCyclicStyleTTML), 0, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 2);
+    assert(result.captions[0].regions[0].chars[0].char_width == 80);
+    assert(result.captions[0].regions[0].chars[0].text_color.u32 ==
+           aribcaption::ColorRGBA(255, 0, 0).u32);
+
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kNonTextEarliestTTML),
+                            std::strlen(kNonTextEarliestTTML), 1000, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions[0].pts == 10000);
 
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kVerticalTTML), std::strlen(kVerticalTTML), 20000, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
@@ -247,6 +290,14 @@ int main() {
     resource_context.resource_count = 0;
     resource_options.document_pts = 0;
     aribcaption::B62DocumentDecodeResult document_result;
+    status = decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kStaticMetadataOnlyTTML),
+        std::strlen(kStaticMetadataOnlyTTML), resource_options,
+        resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kNoCaption);
+    assert(document_result.captions.empty());
+    assert(!document_result.sidecar);
+
     status = decoder.DecodeDocument(reinterpret_cast<const uint8_t*>(kOverlongCenteredTTML),
                                     std::strlen(kOverlongCenteredTTML), resource_options,
                                     resource_context, document_result);
