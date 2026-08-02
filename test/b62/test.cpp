@@ -11,9 +11,13 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 
 #include "aribcaption/b62_decoder.hpp"
+#ifndef ARIBCC_NO_RENDERER
+#include "aribcaption/renderer.hpp"
+#endif
 
 namespace {
 
@@ -562,6 +566,21 @@ int main() {
     assert(embedded_image.source.resolved);
     assert(embedded_image.source.resolved->index == std::numeric_limits<uint32_t>::max());
     assert(embedded_image.source.resolved->bytes->size() == 4);
+
+#ifndef ARIBCC_NO_RENDERER
+    std::weak_ptr<const aribcaption::B62ResourceBlob> retained_font_resource =
+        font_face.sources[0].resource.resolved;
+    aribcaption::Renderer document_renderer(context);
+    assert(document_renderer.Initialize());
+    assert(document_renderer.AppendB62Document(std::move(document_result)));
+    assert(document_result.captions.empty());
+    assert(!document_result.sidecar);
+    assert(!retained_font_resource.expired());
+    isolated_decoder.Reset();
+    assert(!retained_font_resource.expired());
+    document_renderer.Flush();
+    assert(retained_font_resource.expired());
+#endif
 
     aribcaption::B62DecodeOptions options;
     options.document_pts = 1000;
