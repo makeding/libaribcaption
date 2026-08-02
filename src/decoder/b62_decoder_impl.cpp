@@ -11,132 +11,23 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cstring>
 #include <optional>
 #include <string>
-#include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "aribcaption/caption.hpp"
 #include "base/tinyxml2.h"
+#include "decoder/b62_document_metadata.hpp"
+#include "decoder/b62_document_parser.hpp"
 #include "decoder/b62_document_model.hpp"
 #include "decoder/b62_layout.hpp"
 #include "decoder/b62_resource_resolver.hpp"
 #include "decoder/b62_style_context.hpp"
-#include "decoder/b62_text_util.hpp"
-#include "decoder/b62_time.hpp"
 #include "decoder/b62_xml.hpp"
 
 namespace aribcaption::internal {
 namespace {
-
-struct RawCue {
-    const tinyxml2::XMLElement* node = nullptr;
-    std::string id;
-    std::optional<int64_t> start;
-    std::optional<int64_t> end;
-    bool indefinite_start = false;
-    bool indefinite = false;
-};
-
-struct RawAudioCue {
-    const tinyxml2::XMLElement* node = nullptr;
-    const tinyxml2::XMLElement* owner = nullptr;
-    std::optional<int64_t> start;
-    std::optional<int64_t> end;
-    bool indefinite = false;
-};
-
-struct RawBackgroundImage {
-    const tinyxml2::XMLElement* owner = nullptr;
-    const char* source = nullptr;
-    std::optional<int64_t> start;
-    std::optional<int64_t> end;
-    bool indefinite = false;
-};
-
-void AppendElementText(const tinyxml2::XMLNode* parent, std::string& output) {
-    for (const tinyxml2::XMLNode* child = parent ? parent->FirstChild() : nullptr;
-         child; child = child->NextSibling()) {
-        if (const tinyxml2::XMLText* text = child->ToText()) {
-            output += text->Value();
-            continue;
-        }
-        const tinyxml2::XMLElement* element = child->ToElement();
-        if (!element) {
-            continue;
-        }
-        if (B62LocalName(element->Name()) == "br") {
-            output.push_back('\n');
-        } else {
-            AppendElementText(element, output);
-        }
-    }
-}
-
-std::string ElementText(const tinyxml2::XMLElement* element) {
-    std::string text;
-    AppendElementText(element, text);
-    return B62NormalizeText(text);
-}
-
-B62ElementType ElementType(const tinyxml2::XMLElement* element) {
-    if (!element) {
-        return B62ElementType::kUnknown;
-    }
-    std::string_view name = B62LocalName(element->Name());
-    if (name == "div") return B62ElementType::kDiv;
-    if (name == "p") return B62ElementType::kParagraph;
-    if (name == "span") return B62ElementType::kSpan;
-    return B62ElementType::kUnknown;
-}
-
-void CollectRubyElements(const tinyxml2::XMLElement* parent,
-                         std::vector<const tinyxml2::XMLElement*>& elements) {
-    if (!parent) {
-        return;
-    }
-    for (const tinyxml2::XMLElement* child = parent->FirstChildElement();
-         child; child = child->NextSiblingElement()) {
-        if (ElementType(child) != B62ElementType::kUnknown) {
-            elements.push_back(child);
-        }
-        CollectRubyElements(child, elements);
-    }
-}
-
-void CollectRubyAssociations(const tinyxml2::XMLElement* tt,
-                             std::vector<B62RubyAssociation>& associations) {
-    std::vector<const tinyxml2::XMLElement*> elements;
-    CollectRubyElements(tt, elements);
-    std::unordered_map<std::string, const tinyxml2::XMLElement*> targets;
-    for (const tinyxml2::XMLElement* element : elements) {
-        if (const char* id = B62FindXMLID(element)) {
-            targets.emplace(id, element);
-        }
-    }
-    for (const tinyxml2::XMLElement* element : elements) {
-        const char* target_id = B62FindARIBAttribute(element, "ruby");
-        if (!target_id) {
-            continue;
-        }
-        B62RubyAssociation association;
-        association.annotation_type = ElementType(element);
-        if (const char* annotation_id = B62FindXMLID(element)) {
-            association.annotation_id = annotation_id;
-        }
-        association.target_id = target_id;
-        association.annotation_text = ElementText(element);
-        auto target = targets.find(target_id);
-        if (target != targets.end()) {
-            association.target_type = ElementType(target->second);
-            association.target_text = ElementText(target->second);
-        }
-        associations.push_back(std::move(association));
-    }
-}
 
 uint32_t ParseLanguage(const char* value) {
     if (!value) {
@@ -216,16 +107,16 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         return B62DecodeStatus::kError;
     }
 
-    tinyxml2::XMLDocument document;
-    tinyxml2::XMLError error = document.Parse(reinterpret_cast<const char*>(ttml_data), length);
-    const tinyxml2::XMLElement* tt = document.RootElement();
-    if (error != tinyxml2::XML_SUCCESS || !tt || B62LocalName(tt->Name()) != "tt") {
-        log_->e("B62DecoderImpl: invalid TTML document: %s", document.ErrorStr());
+    B62ParsedDocument document;
+    B62ParseDisposition disposition = document.Parse(ttml_data, length);
+    if (disposition == B62ParseDisposition::kInvalid) {
+        log_->e("B62DecoderImpl: invalid TTML document: %s", document.error());
         return B62DecodeStatus::kError;
     }
+    const tinyxml2::XMLElement* tt = document.root();
     B62PresentationMetadata parsed_metadata;
     if (preserve_document_layout && document_metadata) {
-        CollectRubyAssociations(tt, parsed_metadata.ruby_associations);
+        B62CollectRubyAssociations(tt, parsed_metadata);
     }
     const auto emit_clear = [&]() {
         Reset();
@@ -238,66 +129,20 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         out_result.captions.push_back(std::move(clear));
         return B62DecodeStatus::kGotCaption;
     };
-    if (B62IsEmptyTTMLDocument(tt)) {
+    if (disposition == B62ParseDisposition::kEmpty) {
         return emit_clear();
     }
 
-    const tinyxml2::XMLElement* body = B62FirstChild(tt, "body");
-    if (!body) {
+    if (disposition == B62ParseDisposition::kNoBody) {
         return B62DecodeStatus::kNoCaption;
     }
+    const tinyxml2::XMLElement* body = document.body();
 
     B62ResourceResolver resource_resolver(
         resource_store_, tt, preserve_document_layout && document_metadata);
 
     if (preserve_document_layout && document_metadata) {
-        std::vector<const tinyxml2::XMLElement*> font_face_elements;
-        B62CollectDescendants(tt, "font-face", font_face_elements);
-        for (const tinyxml2::XMLElement* font_face_element : font_face_elements) {
-            if (!B62IsARIBElement(font_face_element, "font-face")) {
-                continue;
-            }
-            const char* family = B62FindAttribute(font_face_element, "font-family");
-            if (!family || B62TrimASCII(family).empty()) {
-                continue;
-            }
-            B62FontFace font_face;
-            if (const char* id = B62FindXMLID(font_face_element)) {
-                font_face.id = id;
-            }
-            font_face.family = B62TrimASCII(family);
-            if (const char* unicode_range = B62FindAttribute(font_face_element, "unicode-range")) {
-                font_face.unicode_range = B62TrimASCII(unicode_range);
-            }
-            for (const tinyxml2::XMLElement* source = font_face_element->FirstChildElement();
-                 source; source = source->NextSiblingElement()) {
-                if (!B62IsARIBElement(source, "src")) {
-                    continue;
-                }
-                const char* uri = B62FindAttribute(source, "url");
-                if (!uri) {
-                    continue;
-                }
-                B62FontSource font_source;
-                std::string format = B62TrimASCII(B62FindAttribute(source, "format")
-                    ? B62FindAttribute(source, "format") : "");
-                std::transform(format.begin(), format.end(), format.begin(),
-                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-                B62ResourceKind resource_kind = B62ResourceKind::kUnknown;
-                if (format == "svg") {
-                    font_source.format = B62FontFormat::kSVG;
-                    resource_kind = B62ResourceKind::kSVGFont;
-                } else if (format == "woff") {
-                    font_source.format = B62FontFormat::kWOFF;
-                    resource_kind = B62ResourceKind::kWOFFFont;
-                }
-                font_source.resource = resource_resolver.Resolve(uri, resource_kind);
-                font_face.sources.push_back(std::move(font_source));
-            }
-            if (!font_face.sources.empty()) {
-                parsed_metadata.font_faces.push_back(std::move(font_face));
-            }
-        }
+        B62CollectFontFaces(tt, resource_resolver, parsed_metadata);
     }
 
     std::array<int, 2> plane{3840, 2160};
@@ -308,108 +153,8 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
     B62StyleContext style_context(tt, plane);
     const auto& region_definitions = style_context.regions();
 
-    std::vector<const tinyxml2::XMLElement*> paragraphs;
-    B62CollectDescendants(body, "p", paragraphs);
-    std::vector<RawCue> raw_cues;
-    raw_cues.reserve(paragraphs.size());
-    std::optional<int64_t> minimum_start;
-    for (const tinyxml2::XMLElement* paragraph : paragraphs) {
-        RawCue cue;
-        cue.node = paragraph;
-        if (const char* id = B62FindAttribute(paragraph, "id")) {
-            cue.id = id;
-        }
-        const tinyxml2::XMLElement* timing_node = B62FindNearestTimedNode(paragraph);
-        cue.start = B62ParseTime(B62FindAttribute(paragraph, "begin"), &cue.indefinite_start);
-        if (!cue.start && !cue.indefinite_start && timing_node) {
-            cue.start = B62ParseTime(B62FindAttribute(timing_node, "begin"), &cue.indefinite_start);
-        }
-        bool indefinite_end = false;
-        cue.end = B62ParseTime(B62FindAttribute(paragraph, "end"), &indefinite_end);
-        if (!cue.end && !indefinite_end && timing_node) {
-            cue.end = B62ParseTime(B62FindAttribute(timing_node, "end"), &indefinite_end);
-        }
-        bool indefinite_duration = false;
-        std::optional<int64_t> duration = B62ParseTime(B62FindAttribute(paragraph, "dur"), &indefinite_duration);
-        if (!duration && !indefinite_duration && timing_node) {
-            duration = B62ParseTime(B62FindAttribute(timing_node, "dur"), &indefinite_duration);
-        }
-        cue.indefinite = indefinite_end || indefinite_duration;
-        if (!cue.end && duration && cue.start) {
-            cue.end = *cue.start + *duration;
-        }
-        if (cue.start && (!minimum_start || *cue.start < *minimum_start)) {
-            minimum_start = cue.start;
-        }
-        raw_cues.push_back(cue);
-    }
-    std::vector<const tinyxml2::XMLElement*> audio_elements;
-    B62CollectDescendants(body, "audio", audio_elements);
-    std::vector<RawAudioCue> raw_audio_cues;
-    for (const tinyxml2::XMLElement* audio : audio_elements) {
-        if (!B62IsARIBElement(audio, "audio") || !B62FindAttribute(audio, "src")) {
-            continue;
-        }
-        RawAudioCue cue;
-        cue.node = audio;
-        for (const tinyxml2::XMLNode* node = audio->Parent(); node; node = node->Parent()) {
-            const tinyxml2::XMLElement* element = node->ToElement();
-            if (!element) {
-                continue;
-            }
-            std::string_view name = B62LocalName(element->Name());
-            if (name == "p" || name == "div") {
-                cue.owner = element;
-                break;
-            }
-        }
-        const tinyxml2::XMLElement* timing_node = B62FindNearestTimedNode(audio);
-        cue.start = B62ParseTime(B62FindAttribute(timing_node, "begin"));
-        bool indefinite_end = false;
-        cue.end = B62ParseTime(B62FindAttribute(timing_node, "end"), &indefinite_end);
-        bool indefinite_duration = false;
-        std::optional<int64_t> duration = B62ParseTime(
-            B62FindAttribute(timing_node, "dur"), &indefinite_duration);
-        cue.indefinite = indefinite_end || indefinite_duration;
-        if (!cue.end && duration && cue.start) {
-            cue.end = *cue.start + *duration;
-        }
-        if (cue.start && (!minimum_start || *cue.start < *minimum_start)) {
-            minimum_start = cue.start;
-        }
-        raw_audio_cues.push_back(std::move(cue));
-    }
-    std::vector<const tinyxml2::XMLElement*> background_owners;
-    B62CollectDescendants(body, "div", background_owners);
-    background_owners.insert(background_owners.end(), paragraphs.begin(), paragraphs.end());
-    std::vector<RawBackgroundImage> raw_background_images;
-    for (const tinyxml2::XMLElement* owner : background_owners) {
-        const char* source = B62FindNamespacedAttribute(
-            owner, "backgroundImage",
-            "http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt");
-        if (!source) {
-            continue;
-        }
-        RawBackgroundImage image;
-        image.owner = owner;
-        image.source = source;
-        const tinyxml2::XMLElement* timing_node = B62FindNearestTimedNode(owner);
-        image.start = B62ParseTime(B62FindAttribute(timing_node, "begin"));
-        bool indefinite_end = false;
-        image.end = B62ParseTime(B62FindAttribute(timing_node, "end"), &indefinite_end);
-        bool indefinite_duration = false;
-        std::optional<int64_t> duration = B62ParseTime(
-            B62FindAttribute(timing_node, "dur"), &indefinite_duration);
-        image.indefinite = indefinite_end || indefinite_duration;
-        if (!image.end && duration && image.start) {
-            image.end = *image.start + *duration;
-        }
-        if (image.start && (!minimum_start || *image.start < *minimum_start)) {
-            minimum_start = image.start;
-        }
-        raw_background_images.push_back(std::move(image));
-    }
-    if (raw_cues.empty() && raw_audio_cues.empty() && raw_background_images.empty()) {
+    B62TimedContent timed_content = B62CollectTimedContent(body);
+    if (timed_content.empty()) {
         return B62DecodeStatus::kNoCaption;
     }
 
@@ -417,63 +162,15 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
     if (options.time_base_pts != PTS_NOPTS) {
         timeline_offset = options.time_base_pts;
     } else if (options.align_earliest_to_document_pts &&
-               options.document_pts != PTS_NOPTS && minimum_start) {
-        timeline_offset = options.document_pts - *minimum_start;
+               options.document_pts != PTS_NOPTS && timed_content.minimum_start) {
+        timeline_offset = options.document_pts - *timed_content.minimum_start;
     }
     uint32_t language = ParseLanguage(B62FindAttribute(tt, "lang"));
 
     if (preserve_document_layout && document_metadata) {
-        for (const RawAudioCue& raw_audio : raw_audio_cues) {
-            B62AudioCue audio;
-            audio.owner_type = ElementType(raw_audio.owner);
-            if (const char* owner_id = B62FindXMLID(raw_audio.owner)) {
-                audio.owner_id = owner_id;
-            }
-            if (const char* id = B62FindXMLID(raw_audio.node)) {
-                audio.id = id;
-            }
-            audio.source = resource_resolver.Resolve(B62FindAttribute(raw_audio.node, "src"),
-                                             B62ResourceKind::kAudio);
-            const char* loop = B62FindAttribute(raw_audio.node, "loop");
-            audio.loop = loop && (std::strcmp(loop, "true") == 0 || std::strcmp(loop, "1") == 0);
-            audio.begin_pts = raw_audio.start
-                ? *raw_audio.start + timeline_offset
-                : options.document_pts;
-            if (raw_audio.end) {
-                audio.end_pts = *raw_audio.end + timeline_offset;
-            } else if (!raw_audio.indefinite && audio.begin_pts != PTS_NOPTS) {
-                audio.end_pts = audio.begin_pts + 5000;
-            }
-            parsed_metadata.audio_cues.push_back(std::move(audio));
-        }
-        for (const RawBackgroundImage& raw_image : raw_background_images) {
-            B62BackgroundImage image;
-            image.owner_type = ElementType(raw_image.owner);
-            image.layout_box.width = plane[0];
-            image.layout_box.height = plane[1];
-            if (const char* region_id = B62FindNearestAttribute(raw_image.owner, "region")) {
-                auto region = region_definitions.find(region_id);
-                if (region != region_definitions.end()) {
-                    image.layout_box.x = region->second.x;
-                    image.layout_box.y = region->second.y;
-                    image.layout_box.width = region->second.width;
-                    image.layout_box.height = region->second.height;
-                }
-            }
-            if (const char* owner_id = B62FindXMLID(raw_image.owner)) {
-                image.owner_id = owner_id;
-            }
-            image.source = resource_resolver.Resolve(raw_image.source, B62ResourceKind::kUnknown);
-            image.begin_pts = raw_image.start
-                ? *raw_image.start + timeline_offset
-                : options.document_pts;
-            if (raw_image.end) {
-                image.end_pts = *raw_image.end + timeline_offset;
-            } else if (!raw_image.indefinite && image.begin_pts != PTS_NOPTS) {
-                image.end_pts = image.begin_pts + 5000;
-            }
-            parsed_metadata.background_images.push_back(std::move(image));
-        }
+        B62MaterializeTimedMetadata(
+            timed_content, plane, region_definitions, resource_resolver,
+            timeline_offset, options.document_pts, parsed_metadata);
     }
 
     if (options.operation_mode != B62OperationMode::kLive || options.discontinuity) {
@@ -482,7 +179,7 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
 
     bool continuation_applied = false;
     if (options.operation_mode == B62OperationMode::kLive) {
-        for (const RawCue& raw : raw_cues) {
+        for (const B62RawCue& raw : timed_content.cues) {
             if (!raw.indefinite_start || raw.id.empty()) continue;
             std::optional<int64_t> end;
             if (raw.end) {
@@ -495,7 +192,7 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
 
     std::vector<B62PresentationNode> document_nodes;
 
-    for (const RawCue& raw : raw_cues) {
+    for (const B62RawCue& raw : timed_content.cues) {
         if (raw.indefinite_start) {
             continue;
         }
@@ -505,7 +202,7 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         definition.width = plane[0] * 8 / 10;
         definition.height = plane[1] * 16 / 100;
         bool has_paragraph_region = false;
-        const char* region_id = B62FindNearestAttribute(raw.node, "region");
+        const char* region_id = B62FindNearestAttribute(raw.paragraph, "region");
         if (region_id) {
             if (auto it = region_definitions.find(region_id); it != region_definitions.end()) {
                 definition = it->second;
@@ -513,18 +210,18 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
             }
         }
         B62Style inherited = style_context.CollectInheritedStyle(
-            raw.node, definition.style);
+            raw.paragraph, definition.style);
         definition.style = inherited;
         B62RegionDefinition paragraph_formatting = preserve_document_layout
             ? B62MakeFormattingDefinition(definition, inherited)
             : definition;
         std::vector<B62InlineSpan> spans;
         style_context.AppendInlineSpans(
-            raw.node, inherited, spans,
+            raw.paragraph, inherited, spans,
             preserve_document_layout ? &definition : nullptr,
             preserve_document_layout,
             preserve_document_layout &&
-                B62StyleContext::HasARIBRubyAncestor(raw.node));
+                B62StyleContext::HasARIBRubyAncestor(raw.paragraph));
         if (!preserve_document_layout) {
             B62StyleContext::ResolveLegacyRuby(spans);
         }

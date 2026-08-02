@@ -23,6 +23,10 @@ class B62StyleContext {
 public:
     B62StyleContext(const tinyxml2::XMLElement* document_root,
                     const std::array<int, 2>& plane);
+    B62StyleContext(const B62StyleContext&) = delete;
+    B62StyleContext& operator=(const B62StyleContext&) = delete;
+    B62StyleContext(B62StyleContext&&) = delete;
+    B62StyleContext& operator=(B62StyleContext&&) = delete;
 
     [[nodiscard]] const std::unordered_map<std::string, B62RegionDefinition>&
     regions() const noexcept {

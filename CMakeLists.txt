@@ -207,6 +207,10 @@ add_library(aribcaption
         src/decoder/b62_caption_capi_conversion.hpp
         src/decoder/b62_decoder.cpp
         src/decoder/b62_decoder_capi.cpp
+        src/decoder/b62_document_metadata.cpp
+        src/decoder/b62_document_metadata.hpp
+        src/decoder/b62_document_parser.cpp
+        src/decoder/b62_document_parser.hpp
         src/decoder/b62_document_sidecar.cpp
         src/decoder/b62_document_model.hpp
         src/decoder/b62_decoder_impl.cpp
