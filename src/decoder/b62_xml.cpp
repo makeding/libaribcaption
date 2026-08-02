@@ -11,6 +11,8 @@
 #include <cstring>
 #include <string>
 
+#include "decoder/b62_text_util.hpp"
+
 namespace aribcaption::internal {
 namespace {
 
@@ -111,6 +113,24 @@ bool B62IsARIBElement(const tinyxml2::XMLElement* element,
 bool B62IsSMPTEElement(const tinyxml2::XMLElement* element,
                        std::string_view local_name) {
     return IsElementInNamespace(element, local_name, kSMPTENamespace);
+}
+
+bool B62IsEmptyTTMLDocument(const tinyxml2::XMLElement* tt) {
+    if (!tt) {
+        return false;
+    }
+    for (const tinyxml2::XMLNode* child = tt->FirstChild(); child;
+         child = child->NextSibling()) {
+        if (child->ToElement()) {
+            return false;
+        }
+        if (const tinyxml2::XMLText* text = child->ToText()) {
+            if (!B62TrimASCII(text->Value()).empty()) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 const tinyxml2::XMLElement* B62FirstChild(const tinyxml2::XMLElement* parent,

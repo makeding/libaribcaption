@@ -29,6 +29,7 @@ bool B62IsARIBElement(const tinyxml2::XMLElement* element,
                       std::string_view local_name);
 bool B62IsSMPTEElement(const tinyxml2::XMLElement* element,
                        std::string_view local_name);
+bool B62IsEmptyTTMLDocument(const tinyxml2::XMLElement* tt);
 const tinyxml2::XMLElement* B62FirstChild(const tinyxml2::XMLElement* parent,
                                           std::string_view local_name);
 void B62CollectDescendants(const tinyxml2::XMLElement* parent,

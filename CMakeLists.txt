@@ -206,12 +206,17 @@ add_library(aribcaption
         src/decoder/b62_decoder.cpp
         src/decoder/b62_decoder_capi.cpp
         src/decoder/b62_document_sidecar.cpp
+        src/decoder/b62_document_model.hpp
         src/decoder/b62_decoder_impl.cpp
         src/decoder/b62_decoder_impl.hpp
         src/decoder/b62_presentation_state.cpp
         src/decoder/b62_presentation_state.hpp
         src/decoder/b62_resource_store.cpp
         src/decoder/b62_resource_store.hpp
+        src/decoder/b62_text_util.cpp
+        src/decoder/b62_text_util.hpp
+        src/decoder/b62_time.cpp
+        src/decoder/b62_time.hpp
         src/decoder/b62_xml.cpp
         src/decoder/b62_xml.hpp
         src/decoder/decoder.cpp
