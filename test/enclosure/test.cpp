@@ -58,5 +58,13 @@ int main() {
     }, 1, 1);
     assert(HasSegment(different_colors, Rect(9, 0, 10, 10), black));
     assert(HasSegment(different_colors, Rect(10, 0, 11, 10), red));
+
+    const auto thick = BuildMergedEnclosureSegments({
+        {{0, 0, 10, 10}, black},
+        {{10, 0, 20, 10}, black},
+    }, 3, 2);
+    assert(HasSegment(thick, Rect(0, 0, 10, 2), black));
+    assert(HasSegment(thick, Rect(0, 0, 3, 10), black));
+    assert(!HasSegment(thick, Rect(7, 0, 10, 10), black));
     return 0;
 }

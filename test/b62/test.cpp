@@ -24,7 +24,8 @@ constexpr char kBasicTTML[] = R"TTML(<?xml version="1.0" encoding="UTF-8"?>
   <head>
     <styling>
       <style xml:id="base" tts:fontSize="96px 144px" tts:lineHeight="160px"
-             tts:color="white" tts:textAlign="center" arib-tt:border="solid 3px black"/>
+             tts:color="white" tts:textAlign="center" tts:textOutline="red 2px"
+             arib-tt:border="solid 3px black"/>
       <style xml:id="animated" style="base"/>
     </styling>
     <layout>
@@ -109,6 +110,14 @@ constexpr char kCompleteTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xm
 
 constexpr char kEmptyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"></tt>)TTML";
 
+constexpr char kStructuredEmptyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml">
+  <head/><body/>
+</tt>)TTML";
+
+constexpr char kHeadOnlyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml">
+  <head><metadata/></head>
+</tt>)TTML";
+
 }  // namespace
 
 int main() {
@@ -138,12 +147,14 @@ int main() {
     assert(result.captions[0].regions[0].chars[0].char_width == 96);
     assert(result.captions[0].regions[0].chars[0].char_height == 144);
     assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 16);
-    assert(!(result.captions[0].regions[0].chars[0].style & aribcaption::kCharStyleStroke));
+    assert(result.captions[0].regions[0].chars[0].style & aribcaption::kCharStyleStroke);
     assert(result.captions[0].regions[0].chars[0].style & aribcaption::kCharStyleColoredEnclosure);
     assert(result.captions[0].regions[0].chars[0].enclosure_style ==
            (aribcaption::kEnclosureStyleTop | aribcaption::kEnclosureStyleBottom |
             aribcaption::kEnclosureStyleLeft | aribcaption::kEnclosureStyleRight));
-    assert(result.captions[0].regions[0].chars[0].stroke_color.u32 == aribcaption::ColorRGBA(0, 0, 0).u32);
+    assert(result.captions[0].regions[0].chars[0].stroke_color.u32 == aribcaption::ColorRGBA(255, 0, 0).u32);
+    assert(result.captions[0].regions[0].chars[0].enclosure_color.u32 == aribcaption::ColorRGBA(0, 0, 0).u32);
+    assert(result.captions[0].regions[0].chars[0].enclosure_thickness == 3);
     assert(result.captions[0].regions[1].is_ruby);
 
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kVerticalTTML), std::strlen(kVerticalTTML), 20000, result);
@@ -156,14 +167,6 @@ int main() {
     assert(chars.size() == 7);
     assert(chars[1].y > chars[0].y);
 
-    decoder.SetFontScale(1.25f);
-    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kBasicTTML), std::strlen(kBasicTTML), 10000, result);
-    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
-    assert(result.captions[0].regions[0].chars[0].char_width == 120);
-    assert(result.captions[0].regions[0].chars[0].char_height == 180);
-    assert(result.captions[0].regions[0].chars[0].char_vertical_spacing == 20);
-
-    decoder.SetFontScale(1.0f);
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kOverlongCenteredTTML),
                             std::strlen(kOverlongCenteredTTML), 30000, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
@@ -189,6 +192,17 @@ int main() {
     assert(result.captions.size() == 1);
     assert(result.captions[0].text == "continued");
     assert(result.captions[0].wait_duration == aribcaption::DURATION_INDEFINITE);
+
+    options.document_pts = 5000;
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kStructuredEmptyTTML),
+                            std::strlen(kStructuredEmptyTTML), options, result);
+    assert(status == aribcaption::B62DecodeStatus::kNoCaption);
+    assert(result.captions.empty());
+
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kHeadOnlyTTML),
+                            std::strlen(kHeadOnlyTTML), options, result);
+    assert(status == aribcaption::B62DecodeStatus::kNoCaption);
+    assert(result.captions.empty());
 
     options.document_pts = 6000;
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kLiveSecondTTML),

@@ -141,9 +141,16 @@ typedef struct aribcc_caption_char_t {
     aribcc_color_t text_color;    ///< Color of the text (foreground)
     aribcc_color_t back_color;    ///< Color of the background
     aribcc_color_t stroke_color;  ///< Color of the storke text
+    aribcc_color_t enclosure_color;  ///< Color of a B62 solid enclosure
 
     aribcc_charstyle_t style;
     aribcc_enclosurestyle_t enclosure_style;
+
+    /**
+     * Width of a compatible solid enclosure in caption-plane pixels.
+     * Zero keeps the historical one-pixel B24 enclosure behavior.
+     */
+    int enclosure_thickness;
 
     /**
      * String representation of character encoded in UTF-8. This string is Null-terminated.

@@ -23,7 +23,6 @@ public:
     explicit B62DecoderImpl(Context& context);
     ~B62DecoderImpl();
 
-    void SetFontScale(float scale);
     void Reset();
     B62DecodeStatus Decode(const uint8_t* ttml_data, size_t length, int64_t base_pts, B62DecodeResult& out_result);
     B62DecodeStatus Decode(const uint8_t* ttml_data, size_t length,
@@ -31,7 +30,6 @@ public:
 
 private:
     std::shared_ptr<Logger> log_;
-    float font_scale_ = 1.0f;
     B62PresentationState presentation_state_;
 };
 

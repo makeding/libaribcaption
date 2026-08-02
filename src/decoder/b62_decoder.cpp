@@ -19,10 +19,6 @@ B62Decoder::B62Decoder(B62Decoder&&) noexcept = default;
 
 B62Decoder& B62Decoder::operator=(B62Decoder&&) noexcept = default;
 
-void B62Decoder::SetFontScale(float scale) {
-    pimpl_->SetFontScale(scale);
-}
-
 void B62Decoder::Reset() {
     pimpl_->Reset();
 }

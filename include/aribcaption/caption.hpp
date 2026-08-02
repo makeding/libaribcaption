@@ -65,8 +65,8 @@ enum CharStyle {
     kCharStyleItalic = 1u << 1,
     kCharStyleUnderline = 1u << 2,
     kCharStyleStroke = 1u << 3,
-    // B62 extension: stroke_color carries the enclosure color when the
-    // character itself is not stroked. B24 never emits this flag.
+    // B62 extension: enclosure_color carries an ARIB-TTML border color.
+    // B24 never emits this flag.
     kCharStyleColoredEnclosure = 1u << 4
 };
 
@@ -148,9 +148,16 @@ struct CaptionChar {
     ColorRGBA text_color;    ///< Color of the text (foreground)
     ColorRGBA back_color;    ///< Color of the background
     ColorRGBA stroke_color;  ///< Color of the storke text
+    ColorRGBA enclosure_color;  ///< Color of a B62 solid enclosure
 
     CharStyle style = CharStyle::kCharStyleDefault;
     EnclosureStyle enclosure_style = EnclosureStyle::kEnclosureStyleDefault;
+
+    /**
+     * Width of a compatible solid enclosure in caption-plane pixels.
+     * Zero keeps the historical one-pixel B24 enclosure behavior.
+     */
+    int enclosure_thickness = 0;
 
     /**
      * String representation of character encoded in UTF-8. This string is Null-terminated.

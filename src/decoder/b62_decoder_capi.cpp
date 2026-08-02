@@ -119,12 +119,6 @@ void aribcc_b62_decoder_free(aribcc_b62_decoder_t* decoder) {
     delete reinterpret_cast<B62DecoderImpl*>(decoder);
 }
 
-void aribcc_b62_decoder_set_font_scale(aribcc_b62_decoder_t* decoder, float scale) {
-    if (decoder) {
-        reinterpret_cast<B62DecoderImpl*>(decoder)->SetFontScale(scale);
-    }
-}
-
 void aribcc_b62_decoder_reset(aribcc_b62_decoder_t* decoder) {
     if (decoder) {
         reinterpret_cast<B62DecoderImpl*>(decoder)->Reset();

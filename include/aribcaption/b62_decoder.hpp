@@ -67,12 +67,6 @@ public:
     ARIBCC_API B62Decoder& operator=(B62Decoder&&) noexcept;
 
 public:
-    /**
-     * Scale TTML font metrics while preserving the document coordinate plane.
-     * The default value is 1.0. This is intended for receiver-side subtitle
-     * size preferences rather than document conformance.
-     */
-    ARIBCC_API void SetFontScale(float scale);
     ARIBCC_API void Reset();
 
 public:

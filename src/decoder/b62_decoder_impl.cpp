@@ -71,6 +71,8 @@ struct FontSize {
 
 struct BorderPaint {
     bool visible = false;
+    bool solid_compatible = false;
+    int thickness = 0;
     ColorRGBA color;
 };
 
@@ -140,6 +142,23 @@ std::string TrimASCII(std::string value) {
     auto begin = std::find_if_not(value.begin(), value.end(), is_space);
     auto end = std::find_if_not(value.rbegin(), value.rend(), is_space).base();
     return begin < end ? std::string(begin, end) : std::string();
+}
+
+bool IsEmptyTTMLDocument(const tinyxml2::XMLElement* tt) {
+    if (!tt) {
+        return false;
+    }
+    for (const tinyxml2::XMLNode* child = tt->FirstChild(); child; child = child->NextSibling()) {
+        if (child->ToElement()) {
+            return false;
+        }
+        if (const tinyxml2::XMLText* text = child->ToText()) {
+            if (!TrimASCII(text->Value()).empty()) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 std::string NormalizeText(std::string_view input) {
@@ -474,26 +493,18 @@ void ResolveRuby(std::vector<InlineSpan>& spans) {
     spans = std::move(resolved);
 }
 
-int ScaledStyleLength(const Style& style, const char* key, int base, int fallback, float scale) {
+int StyleLength(const Style& style, const char* key, int base, int fallback) {
     auto it = style.find(key);
     if (it == style.end()) {
         return fallback;
     }
     auto value = ParseLength(it->second, base);
-    return value ? std::max(1, static_cast<int>(std::lround(*value * scale))) : fallback;
-}
-
-FontSize ScaleFontSize(FontSize size, float scale) {
-    return {
-        std::max(1, static_cast<int>(std::lround(size.width * scale))),
-        std::max(1, static_cast<int>(std::lround(size.height * scale))),
-    };
+    return value ? std::max(1, static_cast<int>(std::lround(*value))) : fallback;
 }
 
 FontSize StyleFontSize(const Style& style,
                        const std::array<int, 2>& plane,
-                       FontSize fallback,
-                       float scale) {
+                       FontSize fallback) {
     auto it = style.find("fontSize");
     if (it == style.end()) {
         return fallback;
@@ -502,10 +513,10 @@ FontSize StyleFontSize(const Style& style,
     if (!value) {
         return fallback;
     }
-    return ScaleFontSize({
+    return {
         std::max(1, (*value)[0]),
         std::max(1, (*value)[1]),
-    }, scale);
+    };
 }
 
 std::string StyleValue(const Style& style, const char* key, const char* fallback = "") {
@@ -573,12 +584,21 @@ BorderPaint ParseBorder(std::string value) {
         position = end == std::string::npos ? value.size() : end;
     }
     BorderPaint paint;
-    if (tokens.empty() || tokens[0] == "none" || tokens[0] == "hidden") {
+    if (tokens.empty() ||
+        std::find(tokens.begin(), tokens.end(), "none") != tokens.end() ||
+        std::find(tokens.begin(), tokens.end(), "hidden") != tokens.end()) {
         return paint;
     }
     paint.visible = true;
-    if (tokens.size() >= 3) {
-        paint.color = ParseColor(tokens[2]).value_or(ColorRGBA());
+    paint.solid_compatible = std::find(tokens.begin(), tokens.end(), "solid") != tokens.end();
+    for (const std::string& token : tokens) {
+        if (auto color = ParseColor(token)) {
+            paint.color = *color;
+            continue;
+        }
+        if (auto width = ParseLength(token, 1.0)) {
+            paint.thickness = std::max(1, static_cast<int>(std::lround(*width)));
+        }
     }
     return paint;
 }
@@ -651,9 +671,12 @@ CaptionChar MakeCaptionChar(uint32_t codepoint,
     character.style = MakeCharStyle(style);
     character.enclosure_style = MakeEnclosureStyle(style);
     BorderPaint enclosure = MakeEnclosurePaint(style);
-    if (enclosure.visible && !(character.style & kCharStyleStroke)) {
-        character.stroke_color = enclosure.color;
+    if (enclosure.visible) {
+        character.enclosure_color = enclosure.color;
         character.style = static_cast<CharStyle>(character.style | kCharStyleColoredEnclosure);
+        if (enclosure.solid_compatible) {
+            character.enclosure_thickness = enclosure.thickness;
+        }
     }
     utf::UTF8AppendCodePoint(character.u8str, codepoint);
     return character;
@@ -698,7 +721,6 @@ void ExpandRegionToFitCharacters(CaptionRegion& region) {
 void AppendRubyRegion(const InlineSpan& span,
                       const BoundingBox& base,
                       const std::array<int, 2>& plane,
-                      float font_scale,
                       std::vector<CaptionRegion>& regions) {
     if (span.ruby_text.empty() || !base.IsValid()) {
         return;
@@ -707,7 +729,7 @@ void AppendRubyRegion(const InlineSpan& span,
     if (codepoints.empty()) {
         return;
     }
-    FontSize base_font_size = StyleFontSize(span.style, plane, ScaleFontSize({72, 72}, font_scale), font_scale);
+    FontSize base_font_size = StyleFontSize(span.style, plane, {72, 72});
     FontSize font_size = {
         std::max(1, base_font_size.width / 2),
         std::max(1, base_font_size.height / 2),
@@ -735,22 +757,19 @@ void AppendRubyRegion(const InlineSpan& span,
 void LayoutHorizontal(const std::vector<InlineSpan>& spans,
                       const RegionDefinition& definition,
                       const std::array<int, 2>& plane,
-                      float font_scale,
                       Caption& caption) {
     std::vector<std::vector<CharacterPlacement>> lines(1);
-    FontSize default_font_size =
-        StyleFontSize(definition.style, plane, ScaleFontSize({72, 72}, font_scale), font_scale);
-    int line_height = ScaledStyleLength(definition.style, "lineHeight", plane[1],
-                                        std::max(default_font_size.height, default_font_size.height * 5 / 4),
-                                        font_scale);
+    FontSize default_font_size = StyleFontSize(definition.style, plane, {72, 72});
+    int line_height = StyleLength(definition.style, "lineHeight", plane[1],
+                                  std::max(default_font_size.height, default_font_size.height * 5 / 4));
 
     for (const InlineSpan& span : spans) {
-        FontSize font_size = StyleFontSize(span.style, plane, default_font_size, font_scale);
-        int letter_spacing = ScaledStyleLength(span.style, "letterSpacing", definition.width, 0, font_scale);
+        FontSize font_size = StyleFontSize(span.style, plane, default_font_size);
+        int letter_spacing = StyleLength(span.style, "letterSpacing", definition.width, 0);
         line_height = std::max(
             line_height,
-            ScaledStyleLength(span.style, "lineHeight", plane[1],
-                              std::max(font_size.height, font_size.height * 5 / 4), font_scale));
+            StyleLength(span.style, "lineHeight", plane[1],
+                        std::max(font_size.height, font_size.height * 5 / 4)));
         for (uint32_t codepoint : DecodeUTF8(span.text)) {
             if (codepoint == '\n') {
                 lines.emplace_back();
@@ -792,8 +811,8 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
         }
         for (const CharacterPlacement& placement : line) {
             const Style& style = placement.span->style;
-            FontSize font_size = StyleFontSize(style, plane, default_font_size, font_scale);
-            int letter_spacing = ScaledStyleLength(style, "letterSpacing", definition.width, 0, font_scale);
+            FontSize font_size = StyleFontSize(style, plane, default_font_size);
+            int letter_spacing = StyleLength(style, "letterSpacing", definition.width, 0);
             bool halfwidth = unicode::IsHalfwidthCharacter(placement.codepoint);
             CaptionChar character = MakeCaptionChar(placement.codepoint, style, x, y, font_size.width,
                                                      font_size.height, line_height, letter_spacing, halfwidth);
@@ -812,7 +831,7 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
     for (const InlineSpan& span : spans) {
         auto bounds = span_bounds.find(&span);
         if (bounds != span_bounds.end()) {
-            AppendRubyRegion(span, bounds->second, plane, font_scale, caption.regions);
+            AppendRubyRegion(span, bounds->second, plane, caption.regions);
         }
     }
 }
@@ -820,17 +839,14 @@ void LayoutHorizontal(const std::vector<InlineSpan>& spans,
 void LayoutVertical(const std::vector<InlineSpan>& spans,
                     const RegionDefinition& definition,
                     const std::array<int, 2>& plane,
-                    float font_scale,
                     Caption& caption) {
     std::vector<std::vector<CharacterPlacement>> columns(1);
-    FontSize default_font_size =
-        StyleFontSize(definition.style, plane, ScaleFontSize({72, 72}, font_scale), font_scale);
-    int column_width = ScaledStyleLength(definition.style, "lineHeight", plane[0],
-                                         std::max(default_font_size.width, default_font_size.width * 5 / 4),
-                                         font_scale);
+    FontSize default_font_size = StyleFontSize(definition.style, plane, {72, 72});
+    int column_width = StyleLength(definition.style, "lineHeight", plane[0],
+                                   std::max(default_font_size.width, default_font_size.width * 5 / 4));
     for (const InlineSpan& span : spans) {
-        FontSize font_size = StyleFontSize(span.style, plane, default_font_size, font_scale);
-        int letter_spacing = ScaledStyleLength(span.style, "letterSpacing", definition.height, 0, font_scale);
+        FontSize font_size = StyleFontSize(span.style, plane, default_font_size);
+        int letter_spacing = StyleLength(span.style, "letterSpacing", definition.height, 0);
         for (uint32_t codepoint : DecodeUTF8(span.text)) {
             if (codepoint == '\n') {
                 columns.emplace_back();
@@ -861,9 +877,8 @@ void LayoutVertical(const std::vector<InlineSpan>& spans,
             y += definition.height - column_height;
         }
         for (const CharacterPlacement& placement : column) {
-            FontSize font_size = StyleFontSize(placement.span->style, plane, default_font_size, font_scale);
-            int letter_spacing =
-                ScaledStyleLength(placement.span->style, "letterSpacing", definition.height, 0, font_scale);
+            FontSize font_size = StyleFontSize(placement.span->style, plane, default_font_size);
+            int letter_spacing = StyleLength(placement.span->style, "letterSpacing", definition.height, 0);
             CaptionChar character = MakeCaptionChar(placement.codepoint, placement.span->style,
                                                     x, y, font_size.width, font_size.height,
                                                     font_size.height + letter_spacing, 0, false);
@@ -937,12 +952,6 @@ B62DecoderImpl::B62DecoderImpl(Context& context) : log_(GetContextLogger(context
 
 B62DecoderImpl::~B62DecoderImpl() = default;
 
-void B62DecoderImpl::SetFontScale(float scale) {
-    if (std::isfinite(scale) && scale > 0.0f) {
-        font_scale_ = scale;
-    }
-}
-
 void B62DecoderImpl::Reset() {
     presentation_state_.Reset();
 }
@@ -974,8 +983,6 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         log_->e("B62DecoderImpl: invalid TTML document: %s", document.ErrorStr());
         return B62DecodeStatus::kError;
     }
-    const tinyxml2::XMLElement* body = FirstChild(tt, "body");
-
     const auto emit_clear = [&]() {
         Reset();
         Caption clear;
@@ -987,8 +994,13 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         out_result.captions.push_back(std::move(clear));
         return B62DecodeStatus::kGotCaption;
     };
-    if (!body) {
+    if (IsEmptyTTMLDocument(tt)) {
         return emit_clear();
+    }
+
+    const tinyxml2::XMLElement* body = FirstChild(tt, "body");
+    if (!body) {
+        return B62DecodeStatus::kNoCaption;
     }
 
     std::array<int, 2> plane{3840, 2160};
@@ -1067,7 +1079,7 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         raw_cues.push_back(cue);
     }
     if (raw_cues.empty()) {
-        return emit_clear();
+        return B62DecodeStatus::kNoCaption;
     }
 
     int64_t timeline_offset = 0;
@@ -1136,9 +1148,9 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
 
         std::string writing_mode = StyleValue(definition.style, "writingMode");
         if (writing_mode == "tbrl" || writing_mode == "tb-rl" || writing_mode == "tblr" || writing_mode == "tb-lr") {
-            LayoutVertical(spans, definition, plane, font_scale_, caption);
+            LayoutVertical(spans, definition, plane, caption);
         } else {
-            LayoutHorizontal(spans, definition, plane, font_scale_, caption);
+            LayoutHorizontal(spans, definition, plane, caption);
         }
         if (!caption.regions.empty()) {
             B62PresentationNode node;
@@ -1169,14 +1181,14 @@ B62DecodeStatus B62DecoderImpl::Decode(const uint8_t* ttml_data,
         if (!presentation.nodes.empty()) {
             presentation_state_.Commit(std::move(presentation));
         } else if (!continuation_applied) {
-            return emit_clear();
+            return B62DecodeStatus::kNoCaption;
         }
         presentation_state_.Prune(options.document_pts);
         presentation_state_.BuildScenes(
             options.document_pts, kMaxPresentationEvents, out_result.captions);
     } else {
         if (presentation.nodes.empty()) {
-            return emit_clear();
+            return B62DecodeStatus::kNoCaption;
         }
         B62PresentationState document_state;
         document_state.Commit(std::move(presentation));

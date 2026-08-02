@@ -16,7 +16,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <algorithm>
 #include <cassert>
+#include <iterator>
 #include "renderer/bitmap.hpp"
 #include "renderer/canvas.hpp"
 #include "renderer/enclosure_geometry.hpp"
@@ -141,8 +143,14 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
     constexpr unsigned kFullEnclosure =
         kEnclosureStyleTop | kEnclosureStyleBottom |
         kEnclosureStyleLeft | kEnclosureStyleRight;
+    struct EnclosureGroup {
+        ColorRGBA color;
+        int horizontal_thickness = 1;
+        int vertical_thickness = 1;
+        std::vector<ColoredEnclosureRect> rects;
+    };
     std::vector<bool> merge_enclosure(char_count, false);
-    std::vector<ColoredEnclosureRect> enclosure_rects;
+    std::vector<EnclosureGroup> enclosure_groups;
     for (size_t index = 0; index < char_count; index++) {
         const CaptionChar& ch = region.chars[index];
         if (!(ch.style & CharStyle::kCharStyleColoredEnclosure) ||
@@ -159,16 +167,36 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
             continue;
         }
         merge_enclosure[index] = true;
-        enclosure_rects.push_back({section_rect, ch.stroke_color});
+        const int plane_thickness = ch.enclosure_thickness > 0 ? ch.enclosure_thickness : 1;
+        const int horizontal_thickness = std::max(ScaleX(plane_thickness), 1);
+        const int vertical_thickness = std::max(ScaleY(plane_thickness), 1);
+        auto group = std::find_if(
+            enclosure_groups.begin(), enclosure_groups.end(),
+            [&](const EnclosureGroup& candidate) {
+                return candidate.color.u32 == ch.enclosure_color.u32 &&
+                       candidate.horizontal_thickness == horizontal_thickness &&
+                       candidate.vertical_thickness == vertical_thickness;
+            });
+        if (group == enclosure_groups.end()) {
+            enclosure_groups.push_back({
+                ch.enclosure_color,
+                horizontal_thickness,
+                vertical_thickness,
+                {}
+            });
+            group = std::prev(enclosure_groups.end());
+        }
+        group->rects.push_back({section_rect, ch.enclosure_color});
     }
 
     // B62 maps a full arib-tt:border to a colored enclosure.  The shared B24
     // bitmap renderer draws only the outer edge of the union.
-    if (!enclosure_rects.empty()) {
-        int w = std::max(ScaleX(1), 1);  // use floor
-        int h = std::max(ScaleY(1), 1);  // use floor
+    for (const EnclosureGroup& group : enclosure_groups) {
         for (const ColoredEnclosureSegment& segment :
-             BuildMergedEnclosureSegments(enclosure_rects, w, h)) {
+             BuildMergedEnclosureSegments(
+                 group.rects,
+                 group.horizontal_thickness,
+                 group.vertical_thickness)) {
             canvas.ClearRect(segment.color, segment.rect);
         }
     }
@@ -188,10 +216,11 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
         // Draw enclosure if needed
         if (ch.enclosure_style && !merge_enclosure[char_index]) {
             ColorRGBA enclosure_color = (ch.style & CharStyle::kCharStyleColoredEnclosure)
-                ? ch.stroke_color
+                ? ch.enclosure_color
                 : ch.text_color;
-            int w = std::max(ScaleX(1), 1);  // use floor
-            int h = std::max(ScaleY(1), 1);  // use floor
+            const int plane_thickness = ch.enclosure_thickness > 0 ? ch.enclosure_thickness : 1;
+            int w = std::max(ScaleX(plane_thickness), 1);  // use floor
+            int h = std::max(ScaleY(plane_thickness), 1);  // use floor
             if (ch.enclosure_style & EnclosureStyle::kEnclosureStyleTop) {
                 canvas.ClearRect(enclosure_color,
                                  Rect(section_rect.left,
