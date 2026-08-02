@@ -194,7 +194,7 @@ bool aribcc_renderer_append_caption(aribcc_renderer_t* renderer, const aribcc_ca
     return impl->AppendCaption(std::move(cap));
 }
 
-static void ConvertImageToCAPI(const Image& image, aribcc_image_t* out_image) {
+static bool ConvertImageToCAPI(const Image& image, aribcc_image_t* out_image) {
     out_image->width = image.width;
     out_image->height = image.height;
     out_image->stride = image.stride;
@@ -205,24 +205,42 @@ static void ConvertImageToCAPI(const Image& image, aribcc_image_t* out_image) {
     if (!image.bitmap.empty()) {
         out_image->bitmap_size = static_cast<uint32_t>(image.bitmap.size());
         out_image->bitmap = reinterpret_cast<uint8_t*>(AlignedAlloc(out_image->bitmap_size, Image::kAlignedTo));
+        if (!out_image->bitmap) {
+            out_image->bitmap_size = 0;
+            return false;
+        }
         memcpy(out_image->bitmap, image.bitmap.data(), out_image->bitmap_size);
     }
+    return true;
 }
 
-static void ConvertRenderResultToCAPI(const RenderResult& result, aribcc_render_result_t* out_result) {
+static bool ConvertRenderResultToCAPI(const RenderResult& result, aribcc_render_result_t* out_result) {
     out_result->pts = result.pts;
     out_result->duration = result.duration;
 
     if (!result.images.empty()) {
         out_result->image_count = static_cast<uint32_t>(result.images.size());
         out_result->images = reinterpret_cast<aribcc_image_t*>(calloc(out_result->image_count, sizeof(aribcc_image_t)));
+        if (!out_result->images) {
+            out_result->image_count = 0;
+            return false;
+        }
 
         for (uint32_t i = 0; i < out_result->image_count; i++) {
             const Image& src = result.images[i];
             aribcc_image_t* dst = &out_result->images[i];
-            ConvertImageToCAPI(src, dst);
+            if (!ConvertImageToCAPI(src, dst)) {
+                for (uint32_t j = 0; j <= i; ++j) {
+                    aribcc_image_cleanup(&out_result->images[j]);
+                }
+                free(out_result->images);
+                out_result->images = nullptr;
+                out_result->image_count = 0;
+                return false;
+            }
         }
     }
+    return true;
 }
 
 aribcc_render_status_t aribcc_renderer_try_render(aribcc_renderer_t* renderer, int64_t pts) {
@@ -242,7 +260,9 @@ aribcc_render_status_t aribcc_renderer_render(aribcc_renderer_t* renderer,
     memset(out_result, 0, sizeof(*out_result));
 
     if (status == RenderStatus::kGotImage || status == RenderStatus::kGotImageUnchanged) {
-        ConvertRenderResultToCAPI(result, out_result);
+        if (!ConvertRenderResultToCAPI(result, out_result)) {
+            return ARIBCC_RENDER_STATUS_ERROR;
+        }
     }
 
     return static_cast<aribcc_render_status_t>(status);

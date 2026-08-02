@@ -20,6 +20,7 @@
 #define ARIBCAPTION_ALIGNED_ALLOC_HPP
 
 #include <cstddef>
+#include <limits>
 #include <new>
 #include <type_traits>
 #include "aribcc_export.h"
@@ -51,10 +52,16 @@ public:
     template <class U>
     explicit AlignedAllocator(const AlignedAllocator<U, N>&) noexcept {}
 
-    pointer allocate(size_type n, const_pointer hint = nullptr) const noexcept {
+    pointer allocate(size_type n, const_pointer hint = nullptr) const {
         (void)hint;
+        if (n > std::numeric_limits<size_type>::max() / sizeof(T)) {
+            throw std::bad_array_new_length();
+        }
         size_t size = n * sizeof(T);
         void* ptr = AlignedAlloc(size, N);
+        if (ptr == nullptr) {
+            throw std::bad_alloc();
+        }
         return reinterpret_cast<pointer>(ptr);
     }
 
