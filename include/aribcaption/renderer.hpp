@@ -29,6 +29,8 @@
 
 namespace aribcaption {
 
+struct B62DocumentDecodeResult;
+
 /**
  * Enums for FontProvider indication
  */
@@ -312,6 +314,29 @@ public:
      * @return true on success
      */
     ARIBCC_API bool AppendCaption(Caption&& caption);
+
+    /**
+     * Append all captions and the associated metadata from one ARIB STD-B62 document.
+     *
+     * The complete document is validated before any caption is appended. The renderer
+     * retains the document sidecar until all associated captions are discarded or
+     * Flush() is called.
+     *
+     * @param document B62 document decode result
+     * @return true on success
+     */
+    ARIBCC_API bool AppendB62Document(const B62DocumentDecodeResult& document);
+
+    /**
+     * Append all captions and the associated metadata from one ARIB STD-B62 document.
+     *
+     * This overload moves the captions and sidecar into the renderer after validating
+     * the complete document.
+     *
+     * @param document B62 document decode result
+     * @return true on success
+     */
+    ARIBCC_API bool AppendB62Document(B62DocumentDecodeResult&& document);
 
     /**
      * Retrieve expected RenderStatus at specific PTS, rather than actually do rendering.

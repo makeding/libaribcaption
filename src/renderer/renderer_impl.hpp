@@ -23,12 +23,18 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include "aribcaption/b62_document.hpp"
 #include "aribcaption/caption.hpp"
 #include "aribcaption/renderer.hpp"
 #include "base/logger.hpp"
 #include "renderer/region_renderer.hpp"
 
 namespace aribcaption::internal {
+
+struct StoredCaption {
+    Caption caption;
+    std::shared_ptr<const B62DocumentSidecar> b62_sidecar;
+};
 
 class RendererImpl {
 public:
@@ -56,12 +62,16 @@ public:
 
     bool AppendCaption(const Caption& caption);
     bool AppendCaption(Caption&& caption);
+    bool AppendB62Document(const B62DocumentDecodeResult& document);
+    bool AppendB62Document(B62DocumentDecodeResult&& document);
 
     RenderStatus TryRender(int64_t pts);
     RenderStatus Render(int64_t pts, RenderResult& out_result);
     void Flush();
 private:
     void LoadDefaultFontFamilies();
+    static bool IsValidCaption(const Caption& caption);
+    void AppendStoredCaption(StoredCaption&& stored_caption);
     void CleanupCaptionsIfNecessary();
     void AdjustCaptionArea(int origin_plane_width, int origin_plane_height);
     void InvalidatePrevRenderedImages();
@@ -105,9 +115,9 @@ private:
 
     bool merge_region_images_ = false;
 
-    // PTS => Caption
+    // PTS => Caption and optional B62 document metadata
     // Sorted by PTS incrementally
-    std::map<int64_t, Caption> captions_;
+    std::map<int64_t, StoredCaption> captions_;
 
     RegionRenderer region_renderer_;
 

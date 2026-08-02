@@ -179,7 +179,9 @@ void B62StyleContext::AppendInlineSpans(
     std::vector<B62InlineSpan>& spans,
     const B62RegionDefinition* inherited_region,
     bool preserve_document_layout,
-    bool inherited_is_ruby) {
+    bool inherited_is_ruby,
+    const B62InlineTimeline* timeline,
+    int64_t scene_time) {
     for (const tinyxml2::XMLNode* child = parent->FirstChild(); child;
          child = child->NextSibling()) {
         if (const tinyxml2::XMLText* text = child->ToText()) {
@@ -210,7 +212,11 @@ void B62StyleContext::AppendInlineSpans(
         }
         if (name != "span") {
             AppendInlineSpans(element, inherited_style, spans, inherited_region,
-                              preserve_document_layout, inherited_is_ruby);
+                              preserve_document_layout, inherited_is_ruby,
+                              timeline, scene_time);
+            continue;
+        }
+        if (timeline && !timeline->IsElementActive(element, scene_time)) {
             continue;
         }
 
@@ -235,7 +241,8 @@ void B62StyleContext::AppendInlineSpans(
              B62FindARIBAttribute(element, "ruby") != nullptr);
         size_t begin = spans.size();
         AppendInlineSpans(element, style, spans, region,
-                          preserve_document_layout, is_ruby);
+                          preserve_document_layout, is_ruby,
+                          timeline, scene_time);
         if (resets_position && begin < spans.size()) {
             spans[begin].resets_position = true;
         }

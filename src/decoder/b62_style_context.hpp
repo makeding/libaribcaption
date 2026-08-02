@@ -16,6 +16,7 @@
 
 #include "base/tinyxml2.h"
 #include "decoder/b62_document_model.hpp"
+#include "decoder/b62_inline_timeline.hpp"
 
 namespace aribcaption::internal {
 
@@ -41,7 +42,9 @@ public:
                            std::vector<B62InlineSpan>& spans,
                            const B62RegionDefinition* inherited_region,
                            bool preserve_document_layout,
-                           bool inherited_is_ruby);
+                           bool inherited_is_ruby,
+                           const B62InlineTimeline* timeline = nullptr,
+                           int64_t scene_time = 0);
 
     static void ResolveLegacyRuby(std::vector<B62InlineSpan>& spans);
     static bool HasARIBRubyAncestor(const tinyxml2::XMLElement* element);

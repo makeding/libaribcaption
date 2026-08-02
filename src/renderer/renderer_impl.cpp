@@ -199,34 +199,10 @@ bool RendererImpl::AppendCaption(const Caption& caption) {
     assert(caption.pts != PTS_NOPTS && "Caption without PTS is not supported");
     assert(caption.plane_width > 0 && caption.plane_height > 0);
 
-    if (caption.pts == PTS_NOPTS || caption.plane_width <= 0 || caption.plane_height <= 0) {
+    if (!IsValidCaption(caption)) {
         return false;
     }
-
-    int64_t pts = caption.pts;
-
-    if (captions_.empty()) {
-        captions_.emplace(pts, caption);
-    } else {
-        auto prev = captions_.lower_bound(pts - 1);
-        if (prev == captions_.end() || (prev != captions_.begin() && prev->first > pts - 1)) {
-            --prev;
-        }
-
-        // Correct previous caption's duration
-        if (prev->first < pts && prev->second.wait_duration == DURATION_INDEFINITE) {
-            Caption& prev_caption = prev->second;
-            prev_caption.wait_duration = pts - prev_caption.pts;
-        }
-
-        captions_.insert_or_assign(std::next(prev), pts, caption);
-    }
-
-    if (pts <= prev_rendered_caption_pts_) {
-        InvalidatePrevRenderedImages();
-    }
-
-    CleanupCaptionsIfNecessary();
+    AppendStoredCaption(StoredCaption{caption, nullptr});
     return true;
 }
 
@@ -234,14 +210,51 @@ bool RendererImpl::AppendCaption(Caption&& caption) {
     assert(caption.pts != PTS_NOPTS && "Caption without PTS is not supported");
     assert(caption.plane_width > 0 && caption.plane_height > 0);
 
-    if (caption.pts == PTS_NOPTS || caption.plane_width <= 0 || caption.plane_height <= 0) {
+    if (!IsValidCaption(caption)) {
         return false;
     }
 
-    int64_t pts = caption.pts;
+    AppendStoredCaption(StoredCaption{std::move(caption), nullptr});
+    return true;
+}
+
+bool RendererImpl::AppendB62Document(const B62DocumentDecodeResult& document) {
+    for (const Caption& caption : document.captions) {
+        if (!IsValidCaption(caption)) {
+            return false;
+        }
+    }
+
+    for (const Caption& caption : document.captions) {
+        AppendStoredCaption(StoredCaption{caption, document.sidecar});
+    }
+    return true;
+}
+
+bool RendererImpl::AppendB62Document(B62DocumentDecodeResult&& document) {
+    for (const Caption& caption : document.captions) {
+        if (!IsValidCaption(caption)) {
+            return false;
+        }
+    }
+
+    std::shared_ptr<const B62DocumentSidecar> sidecar = std::move(document.sidecar);
+    for (Caption& caption : document.captions) {
+        AppendStoredCaption(StoredCaption{std::move(caption), sidecar});
+    }
+    document.captions.clear();
+    return true;
+}
+
+bool RendererImpl::IsValidCaption(const Caption& caption) {
+    return caption.pts != PTS_NOPTS && caption.plane_width > 0 && caption.plane_height > 0;
+}
+
+void RendererImpl::AppendStoredCaption(StoredCaption&& stored_caption) {
+    int64_t pts = stored_caption.caption.pts;
 
     if (captions_.empty()) {
-        captions_.emplace(pts, std::move(caption));
+        captions_.emplace(pts, std::move(stored_caption));
     } else {
         auto prev = captions_.lower_bound(pts - 1);
         if (prev == captions_.end() || (prev != captions_.begin() && prev->first > pts - 1)) {
@@ -249,12 +262,12 @@ bool RendererImpl::AppendCaption(Caption&& caption) {
         }
 
         // Correct previous caption's duration
-        if (prev->first < pts && prev->second.wait_duration == DURATION_INDEFINITE) {
-            Caption& prev_caption = prev->second;
+        if (prev->first < pts && prev->second.caption.wait_duration == DURATION_INDEFINITE) {
+            Caption& prev_caption = prev->second.caption;
             prev_caption.wait_duration = pts - prev_caption.pts;
         }
 
-        captions_.insert_or_assign(std::next(prev), pts, std::move(caption));
+        captions_.insert_or_assign(std::next(prev), pts, std::move(stored_caption));
     }
 
     if (pts <= prev_rendered_caption_pts_) {
@@ -262,7 +275,6 @@ bool RendererImpl::AppendCaption(Caption&& caption) {
     }
 
     CleanupCaptionsIfNecessary();
-    return true;
 }
 
 void RendererImpl::CleanupCaptionsIfNecessary() {
@@ -311,7 +323,7 @@ RenderStatus RendererImpl::TryRender(int64_t pts) {
         --iter;
     }
 
-    Caption& caption = iter->second;
+    Caption& caption = iter->second.caption;
     if (pts < caption.pts || (caption.wait_duration != DURATION_INDEFINITE && pts >= caption.pts + caption.wait_duration)) {
         // Timeout
         return RenderStatus::kNoImage;
@@ -351,7 +363,7 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
         --iter;
     }
 
-    Caption& caption = iter->second;
+    Caption& caption = iter->second.caption;
     if (pts < caption.pts || (caption.wait_duration != DURATION_INDEFINITE && pts >= caption.pts + caption.wait_duration)) {
         // Timeout
         InvalidatePrevRenderedImages();

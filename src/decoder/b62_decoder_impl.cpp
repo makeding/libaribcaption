@@ -21,6 +21,7 @@
 #include "decoder/b62_document_metadata.hpp"
 #include "decoder/b62_document_parser.hpp"
 #include "decoder/b62_document_model.hpp"
+#include "decoder/b62_inline_timeline.hpp"
 #include "decoder/b62_layout.hpp"
 #include "decoder/b62_resource_resolver.hpp"
 #include "decoder/b62_style_context.hpp"
@@ -158,6 +159,47 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         return B62DecodeStatus::kNoCaption;
     }
 
+    std::vector<B62InlineTimeline> inline_timelines;
+    if (preserve_document_layout) {
+        inline_timelines.reserve(timed_content.cues.size());
+        timed_content.minimum_start.reset();
+        const auto include_start = [&](const std::optional<int64_t>& start) {
+            if (start && (!timed_content.minimum_start ||
+                          *start < *timed_content.minimum_start)) {
+                timed_content.minimum_start = start;
+            }
+        };
+        for (B62RawCue& raw : timed_content.cues) {
+            const bool had_explicit_start = raw.start.has_value();
+            std::optional<int64_t> fallback_end = raw.end;
+            if (!fallback_end && !raw.indefinite) {
+                // Keep the historical five-second paragraph fallback. This is
+                // presentation policy, not TTML implicit-duration support.
+                fallback_end = raw.start.value_or(0) + 5000;
+            }
+            B62InlineTimeline timeline = B62BuildInlineTimeline(
+                raw.paragraph, raw.start, fallback_end, raw.indefinite);
+            if (!raw.indefinite_start && timeline.valid()) {
+                if (had_explicit_start) {
+                    raw.start = timeline.paragraph_interval().begin;
+                } else {
+                    raw.start.reset();
+                }
+                raw.end = timeline.paragraph_interval().end;
+                raw.indefinite = timeline.paragraph_indefinite();
+            }
+            include_start(raw.start);
+            inline_timelines.push_back(std::move(timeline));
+        }
+        for (const B62RawAudioCue& audio : timed_content.audio_cues) {
+            include_start(audio.start);
+        }
+        for (const B62RawBackgroundImage& image :
+             timed_content.background_images) {
+            include_start(image.start);
+        }
+    }
+
     int64_t timeline_offset = 0;
     if (options.time_base_pts != PTS_NOPTS) {
         timeline_offset = options.time_base_pts;
@@ -192,8 +234,19 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
 
     std::vector<B62PresentationNode> document_nodes;
 
-    for (const B62RawCue& raw : timed_content.cues) {
+    for (size_t cue_index = 0; cue_index < timed_content.cues.size();
+         cue_index++) {
+        const B62RawCue& raw = timed_content.cues[cue_index];
         if (raw.indefinite_start) {
+            continue;
+        }
+        const B62InlineTimeline* inline_timeline = preserve_document_layout
+            ? &inline_timelines[cue_index]
+            : nullptr;
+        const bool use_inline_timeline = inline_timeline &&
+            inline_timeline->valid() && !options.ignore_document_timing;
+        if (preserve_document_layout && !options.ignore_document_timing &&
+            !inline_timeline->valid()) {
             continue;
         }
         B62RegionDefinition definition;
@@ -215,86 +268,141 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         B62RegionDefinition paragraph_formatting = preserve_document_layout
             ? B62MakeFormattingDefinition(definition, inherited)
             : definition;
-        std::vector<B62InlineSpan> spans;
+        std::vector<B62InlineSpan> all_spans;
         style_context.AppendInlineSpans(
-            raw.paragraph, inherited, spans,
+            raw.paragraph, inherited, all_spans,
             preserve_document_layout ? &definition : nullptr,
             preserve_document_layout,
             preserve_document_layout &&
                 B62StyleContext::HasARIBRubyAncestor(raw.paragraph));
         if (!preserve_document_layout) {
-            B62StyleContext::ResolveLegacyRuby(spans);
+            B62StyleContext::ResolveLegacyRuby(all_spans);
         }
-        if (spans.empty()) {
+        if (all_spans.empty()) {
             continue;
         }
 
-        Caption caption;
-        caption.flags = kCaptionFlagsClearScreen;
-        caption.iso6392_language_code = language;
-        caption.plane_width = plane[0];
-        caption.plane_height = plane[1];
-        caption.pts = options.ignore_document_timing
-            ? options.document_pts
-            : (raw.start ? *raw.start + timeline_offset : options.document_pts);
-        for (const B62InlineSpan& span : spans) {
-            if (!preserve_document_layout || !span.is_ruby) {
-                caption.text += span.text;
-            }
-        }
-
-        const auto layout = [&](const std::vector<B62InlineSpan>& layout_spans,
-                                const B62RegionDefinition& layout_definition,
-                                const B62RegionDefinition& clip_definition,
-                                bool preserve_region_bounds) {
-            if (B62IsVerticalWritingMode(layout_definition.style)) {
-                B62LayoutVertical(layout_spans, layout_definition, clip_definition,
-                                  plane, caption, preserve_region_bounds);
-            } else {
-                B62LayoutHorizontal(layout_spans, layout_definition, clip_definition,
-                                    plane, caption, preserve_region_bounds);
-            }
-        };
-        if (preserve_document_layout) {
-            struct SpanFlow {
-                const B62RegionDefinition* definition = nullptr;
-                bool explicit_position = false;
-                std::vector<B62InlineSpan> spans;
-            };
-            std::vector<SpanFlow> flows;
-            for (const B62InlineSpan& span : spans) {
-                if (flows.empty() || span.resets_position) {
-                    flows.push_back({span.region ? span.region : &definition,
-                                     span.resets_position, {}});
-                }
-                flows.back().spans.push_back(span);
-            }
-            for (const SpanFlow& flow : flows) {
-                B62RegionDefinition formatting = B62MakeFormattingDefinition(
-                    *flow.definition, flow.spans.front().style);
-                if (flow.explicit_position) {
-                    // A span region origin is the operation-position reference
-                    // point of its first character, not an alignment box.
-                    formatting.style["textAlign"] = "start";
-                    formatting.style["displayAlign"] = "before";
-                }
-                const B62RegionDefinition& clip = has_paragraph_region
-                    ? paragraph_formatting
-                    : formatting;
-                layout(flow.spans, formatting, clip, true);
-            }
-            B62MergeCaptionRegionsWithSameClip(caption);
+        std::vector<B62InlineScene> cue_scenes;
+        if (use_inline_timeline) {
+            cue_scenes = inline_timeline->scenes();
         } else {
-            layout(spans, definition, definition, false);
+            B62InlineScene scene;
+            scene.begin = raw.start.value_or(0);
+            scene.end = raw.end;
+            cue_scenes.push_back(scene);
         }
-        if (!caption.regions.empty()) {
+        for (size_t scene_index = 0; scene_index < cue_scenes.size();
+             scene_index++) {
+            const B62InlineScene& cue_scene = cue_scenes[scene_index];
+            const auto scene_time_to_pts = [&](int64_t time) {
+                if (raw.start) {
+                    return time + timeline_offset;
+                }
+                const int64_t implicit_origin = options.time_base_pts != PTS_NOPTS
+                    ? options.time_base_pts
+                    : options.document_pts;
+                return implicit_origin == PTS_NOPTS
+                    ? PTS_NOPTS
+                    : implicit_origin + time;
+            };
+            std::vector<B62InlineSpan> spans;
+            if (use_inline_timeline) {
+                style_context.AppendInlineSpans(
+                    raw.paragraph, inherited, spans, &definition, true,
+                    B62StyleContext::HasARIBRubyAncestor(raw.paragraph),
+                    inline_timeline, cue_scene.begin);
+            } else {
+                spans = all_spans;
+            }
+
+            Caption caption;
+            caption.flags = kCaptionFlagsClearScreen;
+            caption.iso6392_language_code = language;
+            caption.plane_width = plane[0];
+            caption.plane_height = plane[1];
+            caption.pts = options.ignore_document_timing
+                ? options.document_pts
+                : (use_inline_timeline
+                       ? scene_time_to_pts(cue_scene.begin)
+                       : (raw.start ? *raw.start + timeline_offset
+                                    : options.document_pts));
+            for (const B62InlineSpan& span : spans) {
+                if (!preserve_document_layout || !span.is_ruby) {
+                    caption.text += span.text;
+                }
+            }
+
+            const auto layout = [&](const std::vector<B62InlineSpan>& layout_spans,
+                                    const B62RegionDefinition& layout_definition,
+                                    const B62RegionDefinition& clip_definition,
+                                    bool preserve_region_bounds) {
+                if (B62IsVerticalWritingMode(layout_definition.style)) {
+                    B62LayoutVertical(layout_spans, layout_definition,
+                                      clip_definition, plane, caption,
+                                      preserve_region_bounds);
+                } else {
+                    B62LayoutHorizontal(layout_spans, layout_definition,
+                                        clip_definition, plane, caption,
+                                        preserve_region_bounds);
+                }
+            };
+            if (preserve_document_layout) {
+                struct SpanFlow {
+                    const B62RegionDefinition* definition = nullptr;
+                    bool explicit_position = false;
+                    std::vector<B62InlineSpan> spans;
+                };
+                std::vector<SpanFlow> flows;
+                for (const B62InlineSpan& span : spans) {
+                    if (flows.empty() || span.resets_position) {
+                        flows.push_back({span.region ? span.region : &definition,
+                                         span.resets_position, {}});
+                    }
+                    flows.back().spans.push_back(span);
+                }
+                for (const SpanFlow& flow : flows) {
+                    B62RegionDefinition formatting = B62MakeFormattingDefinition(
+                        *flow.definition, flow.spans.front().style);
+                    if (flow.explicit_position) {
+                        // A span region origin is the operation-position reference
+                        // point of its first character, not an alignment box.
+                        formatting.style["textAlign"] = "start";
+                        formatting.style["displayAlign"] = "before";
+                    }
+                    const B62RegionDefinition& clip = has_paragraph_region
+                        ? paragraph_formatting
+                        : formatting;
+                    layout(flow.spans, formatting, clip, true);
+                }
+                B62MergeCaptionRegionsWithSameClip(caption);
+            } else {
+                layout(spans, definition, definition, false);
+            }
+
+            // Empty timeline slices are intentional clear intervals. A cue
+            // without any source text was rejected above, so this cannot turn
+            // an empty paragraph into a presentation by itself.
+            if (caption.regions.empty() && !use_inline_timeline) {
+                continue;
+            }
             B62PresentationNode node;
-            node.id = raw.id;
+            const bool is_last_scene = scene_index + 1 == cue_scenes.size();
+            if (is_last_scene) {
+                node.id = raw.id;
+            }
             node.start = caption.pts;
-            node.indefinite = options.ignore_document_timing || raw.indefinite;
+            node.indefinite = options.ignore_document_timing ||
+                (!use_inline_timeline
+                     ? raw.indefinite
+                     : (is_last_scene && !cue_scene.end && raw.indefinite));
             if (!node.indefinite) {
-                int64_t end = raw.end ? *raw.end + timeline_offset
-                                      : (node.start == PTS_NOPTS ? 5000 : node.start + 5000);
+                int64_t end = cue_scene.end
+                    ? (use_inline_timeline
+                           ? scene_time_to_pts(*cue_scene.end)
+                           : *cue_scene.end + timeline_offset)
+                    : (raw.end ? *raw.end + timeline_offset
+                               : (node.start == PTS_NOPTS ? 5000
+                                                          : node.start + 5000));
                 if (node.start != PTS_NOPTS && end <= node.start) {
                     end = node.start + 50;
                 }

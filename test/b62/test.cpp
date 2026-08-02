@@ -123,6 +123,20 @@ constexpr char kOverlappingTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
   </div></body>
 </tt>)TTML";
 
+constexpr char kIndependentlyTimedSpanTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling" xml:lang="ja">
+  <head><layout>
+    <region xml:id="r" tts:origin="100px 100px" tts:extent="1000px 300px"/>
+  </layout></head>
+  <body><div><p xml:id="p1" region="r" begin="1s" end="7s"><span>常時</span><span begin="2s" end="4s">追加</span></p></div></body>
+</tt>)TTML";
+
+constexpr char kNestedTimedSpanTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div begin="2s" end="9s"><div begin="1s" end="6s">
+    <p begin="1s" end="8s"><span>A</span><span begin="1s" end="4s">B</span><span begin="2s" end="10s">C</span></p>
+  </div></div></body>
+</tt>)TTML";
+
 constexpr char kLiveFirstTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
   <body><div><p xml:id="p4" begin="0s" end="indefinite">continued</p></div></body>
 </tt>)TTML";
@@ -138,6 +152,14 @@ constexpr char kLiveRubyFirstTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttm
 
 constexpr char kLiveRubySecondTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
   <body><div><p xml:id="p4" begin="indefinite" end="10s">ignored replacement</p></div></body>
+</tt>)TTML";
+
+constexpr char kLiveTimedSpanFirstTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p xml:id="timed-live" begin="0s" end="indefinite"><span>A</span><span begin="2s" end="4s">B</span></p></div></body>
+</tt>)TTML";
+
+constexpr char kLiveTimedSpanSecondTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
+  <body><div><p xml:id="timed-live" begin="indefinite" end="10s">ignored replacement</p></div></body>
 </tt>)TTML";
 
 constexpr char kLiveBarrierOldTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
@@ -363,6 +385,49 @@ int main() {
     assert(unresolved_ruby != ruby_associations.end());
     assert(unresolved_ruby->target_type == aribcaption::B62ElementType::kUnknown);
 
+    aribcaption::B62DecodeOptions timed_span_options;
+    timed_span_options.document_pts = 10000;
+    timed_span_options.align_earliest_to_document_pts = true;
+    status = decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kIndependentlyTimedSpanTTML),
+        std::strlen(kIndependentlyTimedSpanTTML), timed_span_options,
+        resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions.size() == 4);
+    assert(document_result.captions[0].pts == 10000);
+    assert(document_result.captions[0].text == "常時");
+    assert(document_result.captions[1].pts == 12000);
+    assert(document_result.captions[1].text == "常時追加");
+    assert(document_result.captions[2].pts == 14000);
+    assert(document_result.captions[2].text == "常時");
+    assert(document_result.captions[3].pts == 16000);
+    assert(document_result.captions[3].regions.empty());
+
+    status = decoder.Decode(reinterpret_cast<const uint8_t*>(kIndependentlyTimedSpanTTML),
+                            std::strlen(kIndependentlyTimedSpanTTML), 10000, result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(result.captions.size() == 2);
+    assert(result.captions[0].pts == 10000);
+    assert(result.captions[0].text == "常時追加");
+    assert(result.captions[1].pts == 16000);
+    assert(result.captions[1].regions.empty());
+
+    timed_span_options.document_pts = 20000;
+    status = decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kNestedTimedSpanTTML),
+        std::strlen(kNestedTimedSpanTTML), timed_span_options,
+        resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions.size() == 4);
+    assert(document_result.captions[0].pts == 20000);
+    assert(document_result.captions[0].text == "A");
+    assert(document_result.captions[1].pts == 21000);
+    assert(document_result.captions[1].text == "AB");
+    assert(document_result.captions[2].pts == 22000);
+    assert(document_result.captions[2].text == "ABC");
+    assert(document_result.captions[3].pts == 24000);
+    assert(document_result.captions[3].regions.empty());
+
     status = decoder.Decode(reinterpret_cast<const uint8_t*>(kDocumentRubyTTML),
                             std::strlen(kDocumentRubyTTML), 0, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
@@ -402,6 +467,39 @@ int main() {
     assert(document_result.sidecar);
     assert(document_result.sidecar->ruby_associations().size() == 1);
     assert(document_result.sidecar->ruby_associations()[0].target_id == "ruby-base");
+
+    aribcaption::B62Decoder timed_live_decoder(context);
+    aribcaption::B62DecodeOptions timed_live_options;
+    timed_live_options.operation_mode = aribcaption::B62OperationMode::kLive;
+    timed_live_options.document_pts = 1000;
+    timed_live_options.time_base_pts = 1000;
+    status = timed_live_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kLiveTimedSpanFirstTTML),
+        std::strlen(kLiveTimedSpanFirstTTML), timed_live_options,
+        resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions.size() == 3);
+    assert(document_result.captions[0].pts == 1000);
+    assert(document_result.captions[0].text == "A");
+    assert(document_result.captions[1].pts == 3000);
+    assert(document_result.captions[1].text == "AB");
+    assert(document_result.captions[2].pts == 5000);
+    assert(document_result.captions[2].text == "A");
+    assert(document_result.captions[2].wait_duration ==
+           aribcaption::DURATION_INDEFINITE);
+
+    timed_live_options.document_pts = 6000;
+    status = timed_live_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kLiveTimedSpanSecondTTML),
+        std::strlen(kLiveTimedSpanSecondTTML), timed_live_options,
+        resource_context, document_result);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(document_result.captions.size() == 2);
+    assert(document_result.captions[0].pts == 5000);
+    assert(document_result.captions[0].text == "A");
+    assert(document_result.captions[0].wait_duration == 6000);
+    assert(document_result.captions[1].pts == 11000);
+    assert(document_result.captions[1].regions.empty());
 
     const uint8_t font_bytes[] = {0x77, 0x4f, 0x46, 0x46};
     const uint8_t audio_bytes[] = {0x49, 0x44, 0x33};

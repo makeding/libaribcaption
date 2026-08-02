@@ -26,6 +26,7 @@
 #include "caption.h"
 #include "decoder.h"
 #include "b62_decoder.h"
+#include "b62_document.h"
 
 #ifndef ARIBCC_NO_RENDERER
 #include "image.h"

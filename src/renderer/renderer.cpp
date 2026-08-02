@@ -17,6 +17,7 @@
  */
 
 #include "aribcaption/renderer.hpp"
+#include "aribcaption/b62_document.hpp"
 #include "renderer/renderer_impl.hpp"
 
 namespace aribcaption {
@@ -89,6 +90,14 @@ bool Renderer::AppendCaption(const Caption& caption) {
 
 bool Renderer::AppendCaption(Caption&& caption) {
     return pimpl_->AppendCaption(std::move(caption));
+}
+
+bool Renderer::AppendB62Document(const B62DocumentDecodeResult& document) {
+    return pimpl_->AppendB62Document(document);
+}
+
+bool Renderer::AppendB62Document(B62DocumentDecodeResult&& document) {
+    return pimpl_->AppendB62Document(std::move(document));
 }
 
 RenderStatus Renderer::TryRender(int64_t pts) {

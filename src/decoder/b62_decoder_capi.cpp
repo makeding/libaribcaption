@@ -14,14 +14,10 @@
 #include "aribcaption/b62_decoder.h"
 #include "aribcaption/b62_decoder.hpp"
 #include "decoder/b62_caption_capi_conversion.hpp"
+#include "decoder/b62_decoder_capi_internal.hpp"
 
 using namespace aribcaption;
 using namespace aribcaption::internal;
-
-struct aribcc_b62_decoder_t {
-    explicit aribcc_b62_decoder_t(Context& context) : decoder(context) {}
-    B62Decoder decoder;
-};
 
 extern "C" {
 
