@@ -9,20 +9,57 @@
 #include "decoder/b62_presentation_state.hpp"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <limits>
+#include <unordered_set>
 
 namespace aribcaption::internal {
 namespace {
 
 constexpr int64_t kPruneWindowMilliseconds = 30000;
 constexpr size_t kMaxStoredNodes = 300;
+constexpr size_t kMaxStoredPresentations = 64;
+constexpr size_t kMaxStoredMetadataItems = 1024;
+constexpr size_t kMaxPinnedResourceBytes = 128u * 1024u * 1024u;
 
 bool PresentationLess(const B62Presentation& lhs, const B62Presentation& rhs) {
     if (lhs.start != rhs.start) {
         return lhs.start < rhs.start;
     }
     return lhs.event_id < rhs.event_id;
+}
+
+bool PresentationExpiredBefore(const B62Presentation& presentation, int64_t cutoff) {
+    const bool nodes_expired = std::all_of(
+        presentation.nodes.begin(), presentation.nodes.end(),
+        [&](const B62PresentationNode& node) {
+            return node.end && *node.end < cutoff;
+        });
+    const bool audio_expired = std::all_of(
+        presentation.metadata.audio_cues.begin(), presentation.metadata.audio_cues.end(),
+        [&](const B62AudioCue& audio) {
+            return audio.end_pts && *audio.end_pts < cutoff;
+        });
+    const bool images_expired = std::all_of(
+        presentation.metadata.background_images.begin(),
+        presentation.metadata.background_images.end(),
+        [&](const B62BackgroundImage& image) {
+            return image.end_pts && *image.end_pts < cutoff;
+        });
+    return nodes_expired && audio_expired && images_expired;
+}
+
+void IncludeResourceBytes(const B62ResourceReference& reference,
+                          std::unordered_set<const void*>& seen,
+                          size_t& total) {
+    if (!reference.resolved || !reference.resolved->bytes) {
+        return;
+    }
+    const void* identity = reference.resolved->bytes.get();
+    if (seen.insert(identity).second) {
+        total += reference.resolved->bytes->size();
+    }
 }
 
 }  // namespace
@@ -92,7 +129,7 @@ void B62PresentationState::Commit(B62Presentation presentation) {
         presentations_.end());
     presentations_.push_back(std::move(presentation));
     std::sort(presentations_.begin(), presentations_.end(), PresentationLess);
-    EnforceNodeLimit();
+    EnforceLimits();
 }
 
 void B62PresentationState::Prune(int64_t current_pts) {
@@ -112,12 +149,9 @@ void B62PresentationState::Prune(int64_t current_pts) {
     auto predecessor = std::prev(first_recent);
     presentations_.erase(presentations_.begin(), predecessor);
     B62Presentation& barrier = presentations_.front();
-    const bool expired = std::all_of(barrier.nodes.begin(), barrier.nodes.end(),
-                                     [&](const B62PresentationNode& node) {
-                                         return node.end && *node.end < keep_from;
-                                     });
-    if (expired) {
+    if (PresentationExpiredBefore(barrier, keep_from)) {
         barrier.nodes.clear();
+        barrier.metadata = {};
     }
 }
 
@@ -248,14 +282,40 @@ void B62PresentationState::BuildScenes(int64_t current_pts,
     }
 }
 
-void B62PresentationState::EnforceNodeLimit() {
-    size_t node_count = 0;
-    for (const B62Presentation& presentation : presentations_) {
-        node_count += presentation.nodes.size();
-    }
-    while (node_count > kMaxStoredNodes && presentations_.size() > 1) {
-        node_count -= presentations_.front().nodes.size();
+void B62PresentationState::EnforceLimits() {
+    const auto usage = [&]() {
+        size_t node_count = 0;
+        size_t metadata_count = 0;
+        size_t resource_bytes = 0;
+        std::unordered_set<const void*> seen_resources;
+        for (const B62Presentation& presentation : presentations_) {
+            node_count += presentation.nodes.size();
+            metadata_count += presentation.metadata.ruby_associations.size();
+            metadata_count += presentation.metadata.font_faces.size();
+            metadata_count += presentation.metadata.audio_cues.size();
+            metadata_count += presentation.metadata.background_images.size();
+            for (const B62FontFace& face : presentation.metadata.font_faces) {
+                for (const B62FontSource& source : face.sources) {
+                    IncludeResourceBytes(source.resource, seen_resources, resource_bytes);
+                }
+            }
+            for (const B62AudioCue& audio : presentation.metadata.audio_cues) {
+                IncludeResourceBytes(audio.source, seen_resources, resource_bytes);
+            }
+            for (const B62BackgroundImage& image : presentation.metadata.background_images) {
+                IncludeResourceBytes(image.source, seen_resources, resource_bytes);
+            }
+        }
+        return std::array<size_t, 3>{node_count, metadata_count, resource_bytes};
+    };
+    auto current = usage();
+    while ((presentations_.size() > kMaxStoredPresentations ||
+            current[0] > kMaxStoredNodes ||
+            current[1] > kMaxStoredMetadataItems ||
+            current[2] > kMaxPinnedResourceBytes) &&
+           presentations_.size() > 1) {
         presentations_.erase(presentations_.begin());
+        current = usage();
     }
 }
 

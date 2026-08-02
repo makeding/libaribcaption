@@ -100,19 +100,20 @@ constexpr char kDocumentRubyTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml
 </tt>)TTML";
 
 constexpr char kFontAudioTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling"
     xmlns:arib-tt="http://www.arib.or.jp/ns/arib-tt"
     xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt" xml:lang="ja">
   <head><styling>
     <arib-tt:font-face xml:id="gaiji" font-family="External" unicode-range="U+E000-E001">
       <arib-tt:src url="subt://1" format="woff"/>
     </arib-tt:font-face>
-  </styling><metadata>
+  </styling><layout><region xml:id="image-region" tts:origin="100px 200px" tts:extent="640px 360px"/></layout><metadata>
     <smpte:image xml:id="embedded" imageType="PNG" encoding="Base64">iVBORw==</smpte:image>
   </metadata></head>
   <body><div xml:id="audio-owner" begin="2s" end="4s">
     <arib-tt:audio xml:id="audio" src="subt://2" loop="true"/>
-  </div><div xml:id="external-image" begin="5s" end="7s" smpte:backgroundImage="subt://3"/>
-  <div xml:id="embedded-image" begin="8s" end="10s" smpte:backgroundImage="#embedded"/></body>
+  </div><div xml:id="external-image" region="image-region" begin="5s" end="7s" smpte:backgroundImage="subt://3"/>
+  <div xml:id="embedded-image" region="image-region" begin="8s" end="10s" smpte:backgroundImage="#embedded"/></body>
 </tt>)TTML";
 
 constexpr char kOverlappingTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
@@ -400,6 +401,10 @@ int main() {
     const auto& external_image = document_result.sidecar->background_images()[0];
     assert(external_image.owner_id == "external-image");
     assert(external_image.begin_pts == 5000);
+    assert(external_image.layout_box.x == 100);
+    assert(external_image.layout_box.y == 200);
+    assert(external_image.layout_box.width == 640);
+    assert(external_image.layout_box.height == 360);
     assert(external_image.source.resolved);
     assert(external_image.source.resolved->kind == aribcaption::B62ResourceKind::kPNGImage);
     assert(external_image.source.resolved->bytes->size() == sizeof(image_bytes));

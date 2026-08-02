@@ -203,14 +203,20 @@ add_library(aribcaption
         src/decoder/b24_drcs_conv.hpp
         src/decoder/b24_gaiji_table.hpp
         src/decoder/b24_macros.hpp
+        src/decoder/b62_caption_capi_conversion.cpp
+        src/decoder/b62_caption_capi_conversion.hpp
         src/decoder/b62_decoder.cpp
         src/decoder/b62_decoder_capi.cpp
         src/decoder/b62_document_sidecar.cpp
         src/decoder/b62_document_model.hpp
         src/decoder/b62_decoder_impl.cpp
         src/decoder/b62_decoder_impl.hpp
+        src/decoder/b62_layout.cpp
+        src/decoder/b62_layout.hpp
         src/decoder/b62_presentation_state.cpp
         src/decoder/b62_presentation_state.hpp
+        src/decoder/b62_resource_resolver.cpp
+        src/decoder/b62_resource_resolver.hpp
         src/decoder/b62_resource_store.cpp
         src/decoder/b62_resource_store.hpp
         src/decoder/b62_text_util.cpp

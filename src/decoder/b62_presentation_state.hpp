@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "aribcaption/b62_decoder.hpp"
+#include "aribcaption/b62_document.hpp"
 
 namespace aribcaption::internal {
 
@@ -73,7 +73,7 @@ public:
     [[nodiscard]] bool empty() const { return presentations_.empty(); }
 
 private:
-    void EnforceNodeLimit();
+    void EnforceLimits();
 
     uint64_t next_event_id_ = 1;
     std::vector<B62Presentation> presentations_;
