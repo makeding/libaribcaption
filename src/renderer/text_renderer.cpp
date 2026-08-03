@@ -82,4 +82,29 @@ void TextRenderer::SetReplaceMSZHalfWidthGlyph(bool replace) {
     (void)replace;
 }
 
+void TextRenderer::ClearEmbeddedFonts() {}
+
+auto TextRenderer::DrawCharFromEmbeddedFont(
+    TextRenderContext& render_ctx,
+    const std::shared_ptr<const std::vector<uint8_t>>& font_data,
+    int x, int y, uint32_t ucs4, CharStyle style,
+    ColorRGBA color, ColorRGBA stroke_color, float stroke_width,
+    int char_width, int char_height, float aspect_ratio,
+    std::optional<UnderlineInfo> underline_info) -> TextRenderStatus {
+    (void)render_ctx;
+    (void)font_data;
+    (void)x;
+    (void)y;
+    (void)ucs4;
+    (void)style;
+    (void)color;
+    (void)stroke_color;
+    (void)stroke_width;
+    (void)char_width;
+    (void)char_height;
+    (void)aspect_ratio;
+    (void)underline_info;
+    return TextRenderStatus::kCodePointNotFound;
+}
+
 }  // namespace aribcaption

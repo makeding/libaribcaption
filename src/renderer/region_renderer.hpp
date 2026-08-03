@@ -29,6 +29,7 @@
 #include "aribcaption/image.hpp"
 #include "base/logger.hpp"
 #include "base/result.hpp"
+#include "renderer/b62_font_renderer.hpp"
 #include "renderer/drcs_renderer.hpp"
 #include "renderer/font_provider.hpp"
 #include "renderer/rect.hpp"
@@ -59,6 +60,7 @@ public:
     void SetForceStrokeText(bool force_stroke);
     void SetForceNoBackground(bool force_no_background);
     void SetReplaceMSZHalfWidthGlyph(bool replace);
+    void SetB62DocumentSidecar(std::shared_ptr<const B62DocumentSidecar> sidecar);
     auto RenderCaptionRegion(const CaptionRegion& region,
                              const std::unordered_map<uint32_t, DRCS>& drcs_map) -> Result<Image, RegionRenderError>;
 private:
@@ -94,6 +96,7 @@ private:
 
     std::unique_ptr<FontProvider> font_provider_;
     std::unique_ptr<TextRenderer> text_renderer_;
+    B62FontRenderer b62_font_renderer_;
     DRCSRenderer drcs_renderer_;
 
     bool plane_inited_ = false;

@@ -389,6 +389,8 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
 
     // Prepare for rendering
 
+    region_renderer_.SetB62DocumentSidecar(iter->second.b62_sidecar);
+
     // Set up Font Language
     region_renderer_.SetFontLanguage(caption.iso6392_language_code);
 

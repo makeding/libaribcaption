@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 #include "aribcaption/caption.hpp"
 #include "aribcaption/context.hpp"
 #include "aribcaption/renderer.hpp"
@@ -93,6 +94,7 @@ public:
     virtual void SetLanguage(uint32_t iso6392_language_code) = 0;
     virtual bool SetFontFamily(const std::vector<std::string>& font_family) = 0;
     virtual void SetReplaceMSZHalfWidthGlyph(bool replace);
+    virtual void ClearEmbeddedFonts();
     virtual auto BeginDraw(Bitmap& target_bmp) -> TextRenderContext = 0;
     virtual void EndDraw(TextRenderContext& context) = 0;
     virtual auto DrawChar(TextRenderContext& render_ctx, int x, int y,
@@ -100,6 +102,13 @@ public:
                           float stroke_width, int char_width, int char_height, float aspect_ratio,
                           std::optional<UnderlineInfo> underline_info,
                           TextRenderFallbackPolicy fallback_policy) -> TextRenderStatus = 0;
+    virtual auto DrawCharFromEmbeddedFont(
+        TextRenderContext& render_ctx,
+        const std::shared_ptr<const std::vector<uint8_t>>& font_data,
+        int x, int y, uint32_t ucs4, CharStyle style,
+        ColorRGBA color, ColorRGBA stroke_color, float stroke_width,
+        int char_width, int char_height, float aspect_ratio,
+        std::optional<UnderlineInfo> underline_info) -> TextRenderStatus;
 public:
     // Disallow copy and assign
     TextRenderer(const TextRenderer&) = delete;

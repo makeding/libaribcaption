@@ -48,6 +48,7 @@ public:
     void SetLanguage(uint32_t iso6392_language_code) override;
     bool SetFontFamily(const std::vector<std::string>& font_family) override;
     void SetReplaceMSZHalfWidthGlyph(bool replace) override;
+    void ClearEmbeddedFonts() override;
     auto BeginDraw(Bitmap& target_bmp) -> TextRenderContext override;
     void EndDraw(TextRenderContext& context) override;
     auto DrawChar(TextRenderContext& render_ctx, int x, int y,
@@ -55,8 +56,32 @@ public:
                   float stroke_width, int char_width, int char_height, float aspect_ratio,
                   std::optional<UnderlineInfo> underline_info,
                   TextRenderFallbackPolicy fallback_policy) -> TextRenderStatus override;
+    auto DrawCharFromEmbeddedFont(
+        TextRenderContext& render_ctx,
+        const std::shared_ptr<const std::vector<uint8_t>>& font_data,
+        int x, int y, uint32_t ucs4, CharStyle style,
+        ColorRGBA color, ColorRGBA stroke_color, float stroke_width,
+        int char_width, int char_height, float aspect_ratio,
+        std::optional<UnderlineInfo> underline_info) -> TextRenderStatus override;
 private:
+    struct EmbeddedFace {
+        explicit EmbeddedFace(std::shared_ptr<const std::vector<uint8_t>> data)
+            : font_data(std::move(data)) {}
+
+        std::shared_ptr<const std::vector<uint8_t>> font_data;
+        ScopedHolder<FT_Face> face;
+        std::unordered_map<uint64_t, std::optional<int>> baseline_cache;
+    };
+
     static Bitmap FTBitmapToColoredBitmap(const FT_Bitmap& ft_bmp, ColorRGBA color);
+    auto DrawCharWithFace(
+        TextRenderContext& render_ctx, FT_Face face, FT_UInt glyph_index,
+        std::unordered_map<uint64_t, std::optional<int>>& baseline_cache,
+        std::optional<std::unordered_map<uint32_t, uint32_t>>* halfwidth_subst_map,
+        int x, int y, uint32_t ucs4, CharStyle style,
+        ColorRGBA color, ColorRGBA stroke_color, float stroke_width,
+        int char_width, int char_height, float aspect_ratio,
+        std::optional<UnderlineInfo> underline_info) -> TextRenderStatus;
     auto LoadFontFace(bool is_fallback,
                       std::optional<uint32_t> codepoint = std::nullopt,
                       std::optional<size_t> begin_index = std::nullopt)
@@ -76,6 +101,7 @@ private:
     std::optional<std::unordered_map<uint32_t, uint32_t>> fallback_halfwidth_subst_map_;
     std::unordered_map<uint64_t, std::optional<int>> main_baseline_cache_;
     std::unordered_map<uint64_t, std::optional<int>> fallback_baseline_cache_;
+    std::unordered_map<const std::vector<uint8_t>*, std::unique_ptr<EmbeddedFace>> embedded_faces_;
     size_t main_face_index_ = 0;
 
     bool replace_msz_halfwidth_glyph_ = true;

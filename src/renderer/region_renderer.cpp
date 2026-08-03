@@ -26,7 +26,10 @@
 
 namespace aribcaption {
 
-RegionRenderer::RegionRenderer(Context& context) : context_(context), log_(GetContextLogger(context)) {}
+RegionRenderer::RegionRenderer(Context& context)
+    : context_(context),
+      log_(GetContextLogger(context)),
+      b62_font_renderer_(context) {}
 
 bool RegionRenderer::Initialize(FontProviderType font_provider_type, TextRendererType text_renderer_type) {
     font_provider_ = FontProvider::Create(font_provider_type, context_);
@@ -99,6 +102,12 @@ void RegionRenderer::SetForceNoBackground(bool force_no_background) {
 void RegionRenderer::SetReplaceMSZHalfWidthGlyph(bool replace) {
     assert(text_renderer_);
     text_renderer_->SetReplaceMSZHalfWidthGlyph(replace);
+}
+
+void RegionRenderer::SetB62DocumentSidecar(
+    std::shared_ptr<const B62DocumentSidecar> sidecar) {
+    assert(text_renderer_);
+    b62_font_renderer_.SetDocumentSidecar(std::move(sidecar), *text_renderer_);
 }
 
 auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
@@ -276,6 +285,18 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
 
         // Draw char
         if (type == CaptionCharType::kText) {
+            B62FontRenderer::DrawStatus embedded_status = b62_font_renderer_.DrawChar(
+                *text_renderer_, text_render_ctx, char_x, char_y, ch.codepoint,
+                style, ch.text_color, stroke_color, stroke_width,
+                char_width, char_height, aspect_ratio, underline_info);
+            if (embedded_status == B62FontRenderer::DrawStatus::kOK) {
+                succeed++;
+                continue;
+            }
+            if (embedded_status == B62FontRenderer::DrawStatus::kError) {
+                log_->w("RegionRenderer: B62 embedded font rendering failed for U+%04X; falling back",
+                        ch.codepoint);
+            }
             // Do automatic fallback rendering by default.
             TextRenderFallbackPolicy fallback_policy = TextRenderFallbackPolicy::kAutoFallback;
             if (ch.pua_codepoint) {

@@ -104,7 +104,9 @@ function(import_embedded_freetype)
         # Fetch the content
         FetchContent_Populate(freetype)
         # Set variables for FreeType
-        set(FT_DISABLE_ZLIB ON CACHE BOOL "Disable zlib for embedded Freetype" FORCE)
+        # ARIB STD-B62 may deliver WOFF fonts as same-MPU resources. FreeType's
+        # WOFF driver requires zlib for compressed sfnt tables.
+        set(FT_DISABLE_ZLIB OFF CACHE BOOL "Enable zlib for embedded Freetype" FORCE)
         set(FT_DISABLE_BZIP2 ON CACHE BOOL "Disable bzip2 for embedded Freetype" FORCE)
         set(FT_DISABLE_PNG ON CACHE BOOL "Disable libpng for embedded Freetype" FORCE)
         set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "Disable harfbuzz for embedded Freetype" FORCE)
@@ -254,6 +256,8 @@ if(NOT ARIBCC_NO_RENDERER)
         src/renderer/alphablend_x86.hpp
         src/renderer/bitmap.cpp
         src/renderer/bitmap.hpp
+        src/renderer/b62_font_renderer.cpp
+        src/renderer/b62_font_renderer.hpp
         src/renderer/canvas.cpp
         src/renderer/canvas.hpp
         src/renderer/drcs_renderer.cpp

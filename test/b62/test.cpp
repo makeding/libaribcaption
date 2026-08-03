@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "aribcaption/b62_decoder.hpp"
 #ifndef ARIBCC_NO_RENDERER
@@ -119,6 +120,107 @@ constexpr char kFontAudioTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
   </div><div xml:id="external-image" region="image-region" begin="5s" end="7s" smpte:backgroundImage="subt://3"/>
   <div xml:id="embedded-image" region="image-region" begin="8s" end="10s" smpte:backgroundImage="#embedded"/></body>
 </tt>)TTML";
+
+constexpr char kSVGFontTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    xmlns:arib-tt="http://www.arib.or.jp/ns/arib-tt" ttp:extent="320px 180px">
+  <head><styling>
+    <arib-tt:font-face xml:id="gaiji" font-family="External" unicode-range="U+E000,U+E11A">
+      <arib-tt:src url="subt://7" format="svg"/>
+    </arib-tt:font-face>
+    <style xml:id="external" tts:fontSize="80px" tts:lineHeight="80px"
+           tts:textAlign="start" tts:color="#12ab34"/>
+  </styling><layout>
+    <region xml:id="r" tts:origin="0px 0px" tts:extent="200px 100px"/>
+  </layout></head>
+  <body><div><p region="r" style="external" begin="0s" end="10s">&#xE000;&#xE11A;</p></div></body>
+</tt>)TTML";
+
+constexpr char kSVGFontResource[] = R"SVG(<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"><defs>
+  <font id="external" horiz-adv-x="1000">
+    <font-face units-per-em="1000" ascent="1000" descent="0"/>
+    <glyph unicode="&#xE000;" horiz-adv-x="1000"
+           d="M0 0 L200 0 L200 1000 L0 1000 Z"/>
+    <!-- Exact U+E11A path extracted from the 2026-08-01 BS NTV 4K sample. -->
+    <glyph unicode="&#xE11A;" horiz-adv-x="360" d="M113 345 c-7 -8 -13 -21 -13 -30 0 -8 -4 -15 -10 -15 -5 0 -10 -9 -10 -19 0
+-11 -6 -21 -12 -24 -8 -2 -9 -8 -4 -13 5 -5 11 -4 13 4 5 14 63 17 63 2 0 -5
+5 -10 10 -10 6 0 10 9 10 20 0 11 5 20 10 20 6 0 10 9 10 20 0 16 -7 20 -30
+20 -16 0 -30 5 -30 10 0 6 5 10 10 10 6 0 10 5 10 10 0 14 -13 12 -27 -5z m47
+-55 c0 -5 -13 -10 -30 -10 -16 0 -30 5 -30 10 0 6 14 10 30 10 17 0 30 -4 30
+-10z M300 180 c0 -153 -1 -160 -20 -160 -11 0 -20 -4 -20 -10 0 -5 14 -10 30
+-10 l30 0 0 170 c0 107 -4 170 -10 170 -6 0 -10 -60 -10 -160z M240 190 c0
+-67 4 -110 10 -110 6 0 10 43 10 110 0 67 -4 110 -10 110 -6 0 -10 -43 -10
+-110z M120 230 c0 -5 -18 -10 -40 -10 -22 0 -40 -4 -40 -10 0 -5 18 -10 40
+-10 l40 0 0 -90 c0 -83 -1 -90 -20 -90 -11 0 -20 -4 -20 -10 0 -5 14 -10 30
+-10 30 0 30 0 30 56 0 50 3 59 31 85 18 16 29 32 25 36 -3 3 -14 -4 -25 -15
+-25 -29 -31 -28 -31 8 0 28 2 30 40 30 22 0 40 5 40 10 0 6 -18 10 -40 10 -22
+0 -40 5 -40 10 0 6 -4 10 -10 10 -5 0 -10 -4 -10 -10z M40 170 c0 -5 5 -10 10
+-10 6 0 10 -9 10 -20 0 -11 5 -20 10 -20 15 0 12 29 -4 46 -17 16 -26 18 -26
+4z M61 74 c-12 -14 -21 -28 -18 -31 6 -5 57 41 57 52 0 11 -16 3 -39 -21z
+M160 90 c0 -5 5 -10 10 -10 6 0 10 -9 10 -20 0 -11 5 -20 10 -20 15 0 12 29
+-4 46 -17 16 -26 18 -26 4z"/>
+  </font>
+</defs></svg>)SVG";
+
+constexpr char kWOFFFontTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    xmlns:arib-tt="http://www.arib.or.jp/ns/arib-tt" ttp:extent="320px 180px">
+  <head><styling>
+    <arib-tt:font-face xml:id="gaiji" font-family="External" unicode-range="U+E000">
+      <arib-tt:src url="subt://8" format="woff"/>
+    </arib-tt:font-face>
+    <style xml:id="external" tts:fontSize="80px" tts:lineHeight="80px"
+           tts:textAlign="start" tts:color="#12ab34"/>
+  </styling><layout>
+    <region xml:id="r" tts:origin="0px 0px" tts:extent="100px 100px"/>
+  </layout></head>
+  <body><div><p region="r" style="external" begin="0s" end="10s">&#xE000;</p></div></body>
+</tt>)TTML";
+
+// One-glyph WOFF 1.0 font containing U+E000. Its compressed sfnt tables also
+// exercise the zlib-enabled embedded FreeType configuration used on Android.
+constexpr char kWOFFFontBase64[] =
+    "d09GRgABAAAAAAMIAA4AAAAAAvgAAQABAAAAAAAAAAAAAAAAAAAAAAAAAABHREVGAAACyAAAABQA"
+    "AAAUAA8AA0dQT1MAAALcAAAAEAAAABAAGQAMR1NVQgAAAuwAAAAaAAAAGmyMdIVPUy8yAAAB/AAA"
+    "AD0AAABg6kH8ZGNtYXAAAAI8AAAAKgAAADQADOBTZ2FzcAAAAsAAAAAIAAAACP//AANnbHlmAAAB"
+    "RAAAADoAAAA68WhL1mhlYWQAAAGgAAAANgAAADYYOaD8aGhlYQAAAeAAAAAaAAAAJAP/AgJobXR4"
+    "AAAB2AAAAAYAAAAGAisAEWxvY2EAAAGYAAAABgAAAAYAHQAAbWF4cAAAAYAAAAAYAAAAIAAbASFu"
+    "YW1lAAACaAAAAEIAAABIBEAMYHBvc3QAAAKsAAAAEwAAACD/hgAyAAMAKwArAdUB1QADAAcADwAA"
+    "JTUjFRc1IxUCMhYUBiImNAEVKioqQ7B9fbB964CAVisrAUB9sH19sAAAeJxjYGRgYGBiVGCQYAAB"
+    "RgY0AAAF6AA+AAAAAAAdAAAAAQAAAAEEWpKyll5fDzz1AAkCAAAAAADYpKE3AAAAAN55um7//v/9"
+    "AgACAwAAAAgAAgAAAAAAAAIAABEAKwAAeJxjYGRgYGIAASaG///AbEYGVMAIAC+vAgcAAHicY2Bh"
+    "YmCcwMDKwMDow5jGwMDgDqW/MkgytDAwMDGwMjPAgQADGmh4wPAAqAYEICQDI5KsAoM2AHiwBogA"
+    "AAB4nGNgYGBiYGBgBmIRIMkIplkYFIA0CxAC+Q8Y/v+HkAqMYHkGAFmKBj0AAHicLcgxDkAwAEDR"
+    "17JYnEDEdQwWN2hERCIkxf11sL3/EfUqoW4EHb+jttQkeayyvegwGC0up9tc/uYtN8kfxLAIqQAA"
+    "eJxjYGYAg//NDEYMWAAAKEQBuAAAAAAB//8AAgABAAAADAAAAAAAAAABAAEAAQACAAEAAAAKAAwA"
+    "DgAAAAAAAAABAAAACgAWABgAAWxhdG4ACAAAAAAAAAAAAAA=";
+
+std::vector<uint8_t> DecodeBase64(const char* input) {
+    std::vector<uint8_t> output;
+    uint32_t accumulator = 0;
+    int bits = 0;
+    for (const char* cursor = input; *cursor; ++cursor) {
+        unsigned char ch = static_cast<unsigned char>(*cursor);
+        int value = -1;
+        if (ch >= 'A' && ch <= 'Z') value = ch - 'A';
+        else if (ch >= 'a' && ch <= 'z') value = ch - 'a' + 26;
+        else if (ch >= '0' && ch <= '9') value = ch - '0' + 52;
+        else if (ch == '+') value = 62;
+        else if (ch == '/') value = 63;
+        else if (ch == '=') break;
+        else continue;
+        accumulator = (accumulator << 6) | static_cast<uint32_t>(value);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            output.push_back(static_cast<uint8_t>((accumulator >> bits) & 0xFF));
+        }
+    }
+    return output;
+}
 
 constexpr char kOverlappingTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="ja">
   <body><div>
@@ -568,6 +670,108 @@ int main() {
     assert(embedded_image.source.resolved->bytes->size() == 4);
 
 #ifndef ARIBCC_NO_RENDERER
+    aribcaption::B62Decoder svg_decoder(context);
+    aribcaption::B62ResourceView svg_resource;
+    svg_resource.index = 7;
+    svg_resource.data = reinterpret_cast<const uint8_t*>(kSVGFontResource);
+    svg_resource.size = std::strlen(kSVGFontResource);
+    svg_resource.mime_type = "image/svg+xml";
+    aribcaption::B62ResourceContextView svg_resource_context;
+    svg_resource_context.resources = &svg_resource;
+    svg_resource_context.resource_count = 1;
+    aribcaption::B62DocumentDecodeResult svg_document;
+    aribcaption::B62DecodeOptions svg_options;
+    status = svg_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kSVGFontTTML),
+        std::strlen(kSVGFontTTML), svg_options, svg_resource_context,
+        svg_document);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(svg_document.captions.size() == 2);
+    assert(svg_document.sidecar);
+    const auto& svg_region = svg_document.captions[0].regions[0];
+    const auto& svg_char = svg_region.chars[0];
+    assert(svg_char.codepoint == 0xE000);
+    assert(svg_region.chars.size() == 2);
+    assert(svg_region.chars[1].codepoint == 0xE11A);
+    const int svg_char_x = svg_char.x - svg_region.x;
+    const int svg_char_y = svg_char.y - svg_region.y;
+    const int svg_char_width = svg_char.char_width;
+    const int svg_char_height = svg_char.char_height;
+
+    aribcaption::Renderer svg_renderer(context);
+    assert(svg_renderer.Initialize());
+    assert(svg_renderer.SetFrameSize(320, 180));
+    assert(svg_renderer.SetMargins(0, 0, 0, 0));
+    assert(svg_renderer.AppendB62Document(std::move(svg_document)));
+    aribcaption::RenderResult svg_render_result;
+    assert(svg_renderer.Render(0, svg_render_result) ==
+           aribcaption::RenderStatus::kGotImage);
+    assert(svg_render_result.images.size() == 1);
+    const aribcaption::Image& svg_image = svg_render_result.images[0];
+    auto alpha_at = [&](int x, int y) {
+        assert(x >= 0 && x < svg_image.width);
+        assert(y >= 0 && y < svg_image.height);
+        return svg_image.bitmap[static_cast<size_t>(y) * svg_image.stride +
+                               static_cast<size_t>(x) * 4 + 3];
+    };
+    const int svg_sample_y = svg_char_y + svg_char_height / 2;
+    assert(alpha_at(svg_char_x + svg_char_width / 10, svg_sample_y) > 200);
+    assert(alpha_at(svg_char_x + svg_char_width / 2, svg_sample_y) == 0);
+    const auto& real_sample_char = svg_region.chars[1];
+    size_t real_sample_opaque_pixels = 0;
+    for (int y = real_sample_char.y - svg_region.y;
+         y < real_sample_char.y - svg_region.y + real_sample_char.char_height; ++y) {
+        for (int x = real_sample_char.x - svg_region.x;
+             x < real_sample_char.x - svg_region.x + real_sample_char.char_width; ++x) {
+            if (alpha_at(x, y) > 200) ++real_sample_opaque_pixels;
+        }
+    }
+    assert(real_sample_opaque_pixels > 100);
+
+#if defined(ARIBCC_USE_FREETYPE)
+    const std::vector<uint8_t> woff_bytes = DecodeBase64(kWOFFFontBase64);
+    assert(woff_bytes.size() == 776);
+    aribcaption::B62ResourceView woff_resource;
+    woff_resource.index = 8;
+    woff_resource.data = woff_bytes.data();
+    woff_resource.size = woff_bytes.size();
+    woff_resource.mime_type = "font/woff";
+    aribcaption::B62ResourceContextView woff_resource_context;
+    woff_resource_context.resources = &woff_resource;
+    woff_resource_context.resource_count = 1;
+    aribcaption::B62DocumentDecodeResult woff_document;
+    aribcaption::B62Decoder woff_decoder(context);
+    status = woff_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kWOFFFontTTML),
+        std::strlen(kWOFFFontTTML), svg_options, woff_resource_context,
+        woff_document);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(woff_document.sidecar);
+
+    aribcaption::Renderer woff_renderer(context);
+    assert(woff_renderer.Initialize(aribcaption::CaptionType::kCaption,
+                                    aribcaption::FontProviderType::kAuto,
+                                    aribcaption::TextRendererType::kFreetype));
+    assert(woff_renderer.SetFrameSize(320, 180));
+    assert(woff_renderer.SetMargins(0, 0, 0, 0));
+    assert(woff_renderer.AppendB62Document(std::move(woff_document)));
+    aribcaption::RenderResult woff_render_result;
+    assert(woff_renderer.Render(0, woff_render_result) ==
+           aribcaption::RenderStatus::kGotImage);
+    assert(woff_render_result.images.size() == 1);
+    const aribcaption::Image& woff_image = woff_render_result.images[0];
+    size_t opaque_pixels = 0;
+    for (int y = 0; y < woff_image.height; ++y) {
+        for (int x = 0; x < woff_image.width; ++x) {
+            if (woff_image.bitmap[static_cast<size_t>(y) * woff_image.stride +
+                                  static_cast<size_t>(x) * 4 + 3] != 0) {
+                ++opaque_pixels;
+            }
+        }
+    }
+    assert(opaque_pixels > 100);
+#endif
+
     std::weak_ptr<const aribcaption::B62ResourceBlob> retained_font_resource =
         font_face.sources[0].resource.resolved;
     aribcaption::Renderer document_renderer(context);

@@ -83,6 +83,10 @@ void TextRendererFreetype::SetReplaceMSZHalfWidthGlyph(bool replace) {
     replace_msz_halfwidth_glyph_ = replace;
 }
 
+void TextRendererFreetype::ClearEmbeddedFonts() {
+    embedded_faces_.clear();
+}
+
 auto TextRendererFreetype::BeginDraw(Bitmap& target_bmp) -> TextRenderContext {
     return TextRenderContext(target_bmp);
 }
@@ -219,6 +223,71 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
         }
     }
 
+
+    auto& baseline_cache = face == main_face_
+        ? main_baseline_cache_
+        : fallback_baseline_cache_;
+    auto* halfwidth_subst_map = face == main_face_
+        ? &main_halfwidth_subst_map_
+        : &fallback_halfwidth_subst_map_;
+    return DrawCharWithFace(
+        render_ctx, face, glyph_index, baseline_cache, halfwidth_subst_map,
+        target_x, target_y, ucs4, style, color, stroke_color, stroke_width,
+        char_width, char_height, aspect_ratio, underline_info);
+}
+
+auto TextRendererFreetype::DrawCharFromEmbeddedFont(
+    TextRenderContext& render_ctx,
+    const std::shared_ptr<const std::vector<uint8_t>>& font_data,
+    int target_x, int target_y, uint32_t ucs4, CharStyle style,
+    ColorRGBA color, ColorRGBA stroke_color, float stroke_width,
+    int char_width, int char_height, float aspect_ratio,
+    std::optional<UnderlineInfo> underline_info) -> TextRenderStatus {
+    if (!font_data || font_data->empty() || char_height <= 0) {
+        return TextRenderStatus::kCodePointNotFound;
+    }
+    if (unicode::IsSpaceCharacter(ucs4)) {
+        return TextRenderStatus::kOK;
+    }
+
+    auto found = embedded_faces_.find(font_data.get());
+    if (found == embedded_faces_.end()) {
+        auto embedded = std::make_unique<EmbeddedFace>(font_data);
+        FT_Face face = nullptr;
+        if (FT_New_Memory_Face(library_, font_data->data(),
+                               static_cast<FT_Long>(font_data->size()), 0, &face)) {
+            log_->w("Freetype: Cannot load embedded B62 font");
+            return TextRenderStatus::kFontNotFound;
+        }
+        embedded->face = ScopedHolder<FT_Face>(face, FT_Done_Face);
+        found = embedded_faces_.emplace(font_data.get(), std::move(embedded)).first;
+    }
+
+    EmbeddedFace& embedded = *found->second;
+    FT_UInt glyph_index = FT_Get_Char_Index(embedded.face, ucs4);
+    if (glyph_index == 0) {
+        return TextRenderStatus::kCodePointNotFound;
+    }
+    return DrawCharWithFace(
+        render_ctx, embedded.face, glyph_index, embedded.baseline_cache, nullptr,
+        target_x, target_y, ucs4, style, color, stroke_color, stroke_width,
+        char_width, char_height, aspect_ratio, underline_info);
+}
+
+auto TextRendererFreetype::DrawCharWithFace(
+    TextRenderContext& render_ctx, FT_Face face, FT_UInt glyph_index,
+    std::unordered_map<uint64_t, std::optional<int>>& baseline_cache,
+    std::optional<std::unordered_map<uint32_t, uint32_t>>* halfwidth_subst_map,
+    int target_x, int target_y, uint32_t ucs4, CharStyle style,
+    ColorRGBA color, ColorRGBA stroke_color, float stroke_width,
+    int char_width, int char_height, float aspect_ratio,
+    std::optional<UnderlineInfo> underline_info) -> TextRenderStatus {
+    assert(face);
+    assert(char_height > 0);
+    if (stroke_width < 0.0f) {
+        stroke_width = 0.0f;
+    }
+
     // If aspect_ratio is 0.5 (1:2), this should be MSZ (Middle size)
     bool is_requesting_halfwidth = floating::AlmostEquals(aspect_ratio, 0.5f, 0.05f);
     if (is_requesting_halfwidth && unicode::IsHalfwidthCharacter(ucs4)) {
@@ -226,24 +295,15 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
         char_width = char_height;
     }
 
-    if (replace_msz_halfwidth_glyph_ && is_requesting_halfwidth) {
-        if (face == main_face_) {
-            if (!main_halfwidth_subst_map_) {
-                main_halfwidth_subst_map_ =
-                    LoadSingleGSUBTable(LoadSFNTTable(face, FT_MAKE_TAG('G', 'S', 'U', 'B')), kOpenTypeFeatureHalfWidth,
-                                        kOpenTypeScriptHiraganaKatakana, kOpenTypeLangSysJapanese);
-            }
-        } else if (fallback_face_ && face == fallback_face_) {
-            if (!fallback_halfwidth_subst_map_) {
-                fallback_halfwidth_subst_map_ =
-                    LoadSingleGSUBTable(LoadSFNTTable(face, FT_MAKE_TAG('G', 'S', 'U', 'B')), kOpenTypeFeatureHalfWidth,
-                                        kOpenTypeScriptHiraganaKatakana, kOpenTypeLangSysJapanese);
-            }
+    if (replace_msz_halfwidth_glyph_ && is_requesting_halfwidth && halfwidth_subst_map) {
+        if (!*halfwidth_subst_map) {
+            *halfwidth_subst_map =
+                LoadSingleGSUBTable(LoadSFNTTable(face, FT_MAKE_TAG('G', 'S', 'U', 'B')), kOpenTypeFeatureHalfWidth,
+                                    kOpenTypeScriptHiraganaKatakana, kOpenTypeLangSysJapanese);
         }
-        auto& subst_map = face == main_face_ ? main_halfwidth_subst_map_ : fallback_halfwidth_subst_map_;
-        if (subst_map) {
-            auto subst = subst_map->find(glyph_index);
-            if (subst != subst_map->end()) {
+        if (*halfwidth_subst_map) {
+            auto subst = (*halfwidth_subst_map)->find(glyph_index);
+            if (subst != (*halfwidth_subst_map)->end()) {
                 glyph_index = subst->second;
                 char_width = char_height;
             }
@@ -265,7 +325,6 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
     int em_adjust_y = (char_height - em_height) / 2;
     baseline += em_adjust_y;
 
-    auto& baseline_cache = face == main_face_ ? main_baseline_cache_ : fallback_baseline_cache_;
     uint64_t pixel_size_key = MakePixelSizeKey(char_width, char_height);
     auto baseline_iter = baseline_cache.find(pixel_size_key);
     if (baseline_iter == baseline_cache.end()) {
