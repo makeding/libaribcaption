@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -402,6 +403,7 @@ std::string_view LocalName(const char* name) {
 const tinyxml2::XMLElement* FindDescendant(
     const tinyxml2::XMLElement* element, std::string_view local_name) {
     if (!element) return nullptr;
+    if (LocalName(element->Name()) == local_name) return element;
     for (const tinyxml2::XMLElement* child = element->FirstChildElement();
          child; child = child->NextSiblingElement()) {
         if (LocalName(child->Name()) == local_name) {
@@ -504,12 +506,14 @@ bool UnicodeRangeContains(std::string_view ranges, uint32_t codepoint) {
             std::string_view body(token.data() + 2, token.size() - 2);
             size_t wildcard = body.find('?');
             if (wildcard != std::string_view::npos) {
-                bool valid = true;
+                bool valid = !body.empty() && body.size() <= 6;
                 for (size_t i = wildcard; i < body.size(); ++i) {
                     if (body[i] != '?') valid = false;
                 }
                 uint32_t prefix = 0;
-                if (valid && ParseHex(body.substr(0, wildcard), prefix)) {
+                bool parsed_prefix = wildcard == 0 ||
+                                     ParseHex(body.substr(0, wildcard), prefix);
+                if (valid && parsed_prefix) {
                     size_t wildcard_count = body.size() - wildcard;
                     uint32_t low = prefix << (wildcard_count * 4);
                     uint32_t high = low | ((1u << (wildcard_count * 4)) - 1u);

@@ -139,10 +139,10 @@ constexpr char kSVGFontTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
 
 constexpr char kSVGFontResource[] = R"SVG(<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"><defs>
-  <font id="external" horiz-adv-x="1000">
-    <font-face units-per-em="1000" ascent="1000" descent="0"/>
-    <glyph unicode="&#xE000;" horiz-adv-x="1000"
-           d="M0 0 L200 0 L200 1000 L0 1000 Z"/>
+  <font id="external" horiz-adv-x="360">
+    <font-face units-per-em="360" ascent="360" descent="0"/>
+    <glyph unicode="&#xE000;" horiz-adv-x="360"
+           d="M0 0 L72 0 L72 360 L0 360 Z"/>
     <!-- Exact U+E11A path extracted from the 2026-08-01 BS NTV 4K sample. -->
     <glyph unicode="&#xE11A;" horiz-adv-x="360" d="M113 345 c-7 -8 -13 -21 -13 -30 0 -8 -4 -15 -10 -15 -5 0 -10 -9 -10 -19 0
 -11 -6 -21 -12 -24 -8 -2 -9 -8 -4 -13 5 -5 11 -4 13 4 5 14 63 17 63 2 0 -5
