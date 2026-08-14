@@ -11,7 +11,10 @@
 
 namespace aribcaption {
 
-B62Decoder::B62Decoder(Context& context) : pimpl_(std::make_unique<internal::B62DecoderImpl>(context)) {}
+B62Decoder::B62Decoder(Context& context) : B62Decoder(context, CaptionType::kCaption) {}
+
+B62Decoder::B62Decoder(Context& context, CaptionType caption_type)
+    : pimpl_(std::make_unique<internal::B62DecoderImpl>(context, caption_type)) {}
 
 B62Decoder::~B62Decoder() = default;
 

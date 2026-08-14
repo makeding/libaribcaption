@@ -70,7 +70,7 @@ public:
     void Flush();
 private:
     void LoadDefaultFontFamilies();
-    static bool IsValidCaption(const Caption& caption);
+    bool IsValidCaption(const Caption& caption) const;
     void AppendStoredCaption(StoredCaption&& stored_caption);
     void CleanupCaptionsIfNecessary();
     void AdjustCaptionArea(int origin_plane_width, int origin_plane_height);

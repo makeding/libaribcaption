@@ -246,8 +246,9 @@ bool RendererImpl::AppendB62Document(B62DocumentDecodeResult&& document) {
     return true;
 }
 
-bool RendererImpl::IsValidCaption(const Caption& caption) {
-    return caption.pts != PTS_NOPTS && caption.plane_width > 0 && caption.plane_height > 0;
+bool RendererImpl::IsValidCaption(const Caption& caption) const {
+    return caption.type == expected_caption_type_ &&
+           caption.pts != PTS_NOPTS && caption.plane_width > 0 && caption.plane_height > 0;
 }
 
 void RendererImpl::AppendStoredCaption(StoredCaption&& stored_caption) {

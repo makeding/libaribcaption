@@ -62,6 +62,7 @@ int main(void) {
         decoder, (const uint8_t*)kTTML, strlen(kTTML), 1000, &result);
     assert(status == ARIBCC_B62_DECODE_STATUS_GOT_CAPTION);
     assert(result.caption_count == 2);
+    assert(result.captions[0].type == ARIBCC_CAPTIONTYPE_CAPTION);
     assert(result.captions[0].pts == 1000);
     assert(strcmp(result.captions[0].text, "C ABI") == 0);
     assert(ARIBCC_COLOR_R(result.captions[0].regions[0].chars[0].enclosure_color) == 0);
@@ -71,6 +72,21 @@ int main(void) {
 
     aribcc_b62_decode_result_cleanup(&result);
     assert(result.captions == NULL && result.caption_count == 0);
+
+    assert(aribcc_b62_decoder_alloc_with_type(
+        context, (aribcc_captiontype_t)0) == NULL);
+    aribcc_b62_decoder_t* superimpose_decoder = aribcc_b62_decoder_alloc_with_type(
+        context, ARIBCC_CAPTIONTYPE_SUPERIMPOSE);
+    assert(superimpose_decoder != NULL);
+    status = aribcc_b62_decoder_decode(
+        superimpose_decoder, (const uint8_t*)kTTML, strlen(kTTML), 1000, &result);
+    assert(status == ARIBCC_B62_DECODE_STATUS_GOT_CAPTION);
+    assert(result.caption_count == 2);
+    for (uint32_t i = 0; i < result.caption_count; ++i) {
+        assert(result.captions[i].type == ARIBCC_CAPTIONTYPE_SUPERIMPOSE);
+    }
+    aribcc_b62_decode_result_cleanup(&result);
+    aribcc_b62_decoder_free(superimpose_decoder);
 
     const uint8_t resource_bytes[] = {0x00, 0x01, 0x02, 0x03};
     aribcc_b62_resource_t resource = {

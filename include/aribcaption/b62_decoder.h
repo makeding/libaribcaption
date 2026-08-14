@@ -77,6 +77,9 @@ typedef struct aribcc_b62_decoder_t aribcc_b62_decoder_t;
 ARIBCC_API void aribcc_b62_decode_options_init(aribcc_b62_decode_options_t* options);
 ARIBCC_API void aribcc_b62_resource_context_init(aribcc_b62_resource_context_t* resource_context);
 ARIBCC_API aribcc_b62_decoder_t* aribcc_b62_decoder_alloc(aribcc_context_t* context);
+ARIBCC_API aribcc_b62_decoder_t* aribcc_b62_decoder_alloc_with_type(
+    aribcc_context_t* context,
+    aribcc_captiontype_t caption_type);
 ARIBCC_API void aribcc_b62_decoder_free(aribcc_b62_decoder_t* decoder);
 ARIBCC_API void aribcc_b62_decoder_reset(aribcc_b62_decoder_t* decoder);
 

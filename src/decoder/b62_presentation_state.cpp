@@ -157,6 +157,7 @@ void B62PresentationState::Prune(int64_t current_pts) {
 
 void B62PresentationState::BuildScenes(int64_t current_pts,
                                        size_t max_events,
+                                       CaptionType caption_type,
                                        std::vector<Caption>& out_captions,
                                        B62PresentationMetadata* out_metadata) const {
     out_captions.clear();
@@ -259,6 +260,7 @@ void B62PresentationState::BuildScenes(int64_t current_pts,
         }
 
         Caption scene;
+        scene.type = caption_type;
         scene.flags = kCaptionFlagsClearScreen;
         scene.pts = pts;
         scene.plane_width = selected->plane_width;

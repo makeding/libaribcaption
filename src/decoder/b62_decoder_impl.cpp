@@ -58,8 +58,8 @@ uint32_t ParseLanguage(const char* value) {
 
 }  // namespace
 
-B62DecoderImpl::B62DecoderImpl(Context& context)
-    : log_(GetContextLogger(context)), resource_store_(log_) {}
+B62DecoderImpl::B62DecoderImpl(Context& context, CaptionType caption_type)
+    : log_(GetContextLogger(context)), caption_type_(caption_type), resource_store_(log_) {}
 
 B62DecoderImpl::~B62DecoderImpl() = default;
 
@@ -122,6 +122,7 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
     const auto emit_clear = [&]() {
         Reset();
         Caption clear;
+        clear.type = caption_type_;
         clear.flags = kCaptionFlagsClearScreen;
         clear.pts = options.document_pts;
         clear.wait_duration = DURATION_INDEFINITE;
@@ -432,7 +433,7 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         }
         presentation_state.Prune(options.document_pts);
         presentation_state.BuildScenes(
-            options.document_pts, kMaxPresentationEvents, out_result.captions,
+            options.document_pts, kMaxPresentationEvents, caption_type_, out_result.captions,
             document_metadata);
     } else {
         if (!has_presentation_content) {
@@ -441,7 +442,7 @@ B62DecodeStatus B62DecoderImpl::DecodeInternal(const uint8_t* ttml_data,
         B62PresentationState document_state;
         document_state.Commit(std::move(presentation));
         document_state.BuildScenes(
-            options.document_pts, kMaxPresentationEvents, out_result.captions,
+            options.document_pts, kMaxPresentationEvents, caption_type_, out_result.captions,
             document_metadata);
     }
 

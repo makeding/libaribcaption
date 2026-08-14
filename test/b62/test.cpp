@@ -334,6 +334,9 @@ int main() {
     auto status = decoder.Decode(reinterpret_cast<const uint8_t*>(kBasicTTML), std::strlen(kBasicTTML), 10000, result);
     assert(status == aribcaption::B62DecodeStatus::kGotCaption);
     assert(result.captions.size() == 4);
+    assert(std::all_of(result.captions.begin(), result.captions.end(), [](const auto& caption) {
+        return caption.type == aribcaption::CaptionType::kCaption;
+    }));
     assert(result.captions[0].pts == 10000);
     assert(result.captions[0].wait_duration == 4600);
     assert(result.captions[1].pts == 14600);
@@ -670,6 +673,29 @@ int main() {
     assert(embedded_image.source.resolved->bytes->size() == 4);
 
 #ifndef ARIBCC_NO_RENDERER
+    aribcaption::B62Decoder superimpose_decoder(
+        context, aribcaption::CaptionType::kSuperimpose);
+    aribcaption::B62DocumentDecodeResult superimpose_document;
+    aribcaption::B62DecodeOptions superimpose_options;
+    superimpose_options.document_pts = 0;
+    aribcaption::B62ResourceContextView empty_resource_context;
+    status = superimpose_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kBasicTTML), std::strlen(kBasicTTML),
+        superimpose_options, empty_resource_context, superimpose_document);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(std::all_of(superimpose_document.captions.begin(), superimpose_document.captions.end(),
+                       [](const auto& caption) {
+        return caption.type == aribcaption::CaptionType::kSuperimpose;
+    }));
+
+    aribcaption::Renderer caption_only_renderer(context);
+    assert(caption_only_renderer.Initialize(aribcaption::CaptionType::kCaption));
+    assert(!caption_only_renderer.AppendB62Document(superimpose_document));
+
+    aribcaption::Renderer superimpose_renderer(context);
+    assert(superimpose_renderer.Initialize(aribcaption::CaptionType::kSuperimpose));
+    assert(superimpose_renderer.AppendB62Document(std::move(superimpose_document)));
+
     aribcaption::B62Decoder svg_decoder(context);
     aribcaption::B62ResourceView svg_resource;
     svg_resource.index = 7;

@@ -12,7 +12,8 @@
 #include "aribcaption/b62_decoder.hpp"
 
 struct aribcc_b62_decoder_t {
-    explicit aribcc_b62_decoder_t(aribcaption::Context& context) : decoder(context) {}
+    aribcc_b62_decoder_t(aribcaption::Context& context, aribcaption::CaptionType caption_type)
+        : decoder(context, caption_type) {}
 
     aribcaption::B62Decoder decoder;
 };

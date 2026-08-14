@@ -67,6 +67,7 @@ public:
 
     void BuildScenes(int64_t current_pts,
                      size_t max_events,
+                     CaptionType caption_type,
                      std::vector<Caption>& out_captions,
                      B62PresentationMetadata* out_metadata = nullptr) const;
 

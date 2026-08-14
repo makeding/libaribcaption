@@ -92,6 +92,7 @@ struct B62DecodeResult {
 class B62Decoder {
 public:
     ARIBCC_API explicit B62Decoder(Context& context);
+    ARIBCC_API B62Decoder(Context& context, CaptionType caption_type);
     ARIBCC_API ~B62Decoder();
     ARIBCC_API B62Decoder(B62Decoder&&) noexcept;
     ARIBCC_API B62Decoder& operator=(B62Decoder&&) noexcept;

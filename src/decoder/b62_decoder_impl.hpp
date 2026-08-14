@@ -21,7 +21,7 @@ namespace aribcaption::internal {
 
 class B62DecoderImpl {
 public:
-    explicit B62DecoderImpl(Context& context);
+    B62DecoderImpl(Context& context, CaptionType caption_type);
     ~B62DecoderImpl();
 
     void Reset();
@@ -53,6 +53,7 @@ private:
 
 private:
     std::shared_ptr<Logger> log_;
+    CaptionType caption_type_;
     B62PresentationState legacy_presentation_state_;
     B62PresentationState document_presentation_state_;
     B62ResourceStore resource_store_;
