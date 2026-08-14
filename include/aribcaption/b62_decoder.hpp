@@ -91,7 +91,10 @@ struct B62DecodeResult {
  */
 class B62Decoder {
 public:
+    /** Construct a decoder for an ordinary closed-caption track. */
     ARIBCC_API explicit B62Decoder(Context& context);
+
+    /** Construct a decoder whose presentation state is bound to one caption type. */
     ARIBCC_API B62Decoder(Context& context, CaptionType caption_type);
     ARIBCC_API ~B62Decoder();
     ARIBCC_API B62Decoder(B62Decoder&&) noexcept;

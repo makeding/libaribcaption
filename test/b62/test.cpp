@@ -679,6 +679,13 @@ int main() {
     aribcaption::B62DecodeOptions superimpose_options;
     superimpose_options.document_pts = 0;
     aribcaption::B62ResourceContextView empty_resource_context;
+    aribcaption::B62DecodeResult superimpose_clear;
+    status = superimpose_decoder.Decode(
+        reinterpret_cast<const uint8_t*>(kEmptyTTML), std::strlen(kEmptyTTML),
+        0, superimpose_clear);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(superimpose_clear.captions.size() == 1);
+    assert(superimpose_clear.captions[0].type == aribcaption::CaptionType::kSuperimpose);
     status = superimpose_decoder.DecodeDocument(
         reinterpret_cast<const uint8_t*>(kBasicTTML), std::strlen(kBasicTTML),
         superimpose_options, empty_resource_context, superimpose_document);
