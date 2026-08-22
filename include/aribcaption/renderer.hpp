@@ -228,6 +228,7 @@ public:
      *
      * The renderer contains an auto-fallback mechanism among indicated font families.
      * The renderer also contains predefined font indications for Windows / macOS / Linux / Android.
+     * On Android, an entry may also be an absolute path to a readable font file.
      *
      * @param font_family    Array of font family names
      * @param force_default  Whether force use these font families for all languages
@@ -240,6 +241,7 @@ public:
      *
      * The renderer contains an auto-fallback mechanism among indicated font families.
      * The renderer also contains predefined font indications for Windows / macOS / Linux / Android.
+     * On Android, an entry may also be an absolute path to a readable font file.
      *
      * @param language_code ISO639-2 Language Code, e.g. ThreeCC("jpn")
      * @param font_family   Array of font family names

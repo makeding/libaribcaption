@@ -54,6 +54,14 @@ void FontProviderAndroid::SetLanguage(uint32_t iso6392_language_code) {
 
 auto FontProviderAndroid::GetFontFace(const std::string &font_name,
                                       std::optional<uint32_t> ucs4) -> Result<FontfaceInfo, FontProviderError> {
+    if (!font_name.empty() && font_name.front() == '/' && access(font_name.c_str(), R_OK) == 0) {
+        FontfaceInfo info;
+        info.filename = font_name;
+        info.face_index = 0;
+        info.provider_type = FontProviderType::kAndroid;
+        return Ok(std::move(info));
+    }
+
     FontFile* font_file = nullptr;
 
     if (iso6392_language_code_ == ThreeCC("jpn") || iso6392_language_code_ == 0) {

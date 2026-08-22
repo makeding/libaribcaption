@@ -265,6 +265,7 @@ ARIBCC_API void aribcc_renderer_set_merge_region_images(aribcc_renderer_t* rende
  *
  * The renderer contains an auto-fallback mechanism among indicated font families.
  * The renderer also contains predefined font indications for Windows / macOS / Linux / Android.
+ * On Android, an entry may also be an absolute path to a readable font file.
  *
  * @param font_family    Array of font family names
  * @param family_count   Element count of font_family array
@@ -290,6 +291,7 @@ ARIBCC_API bool aribcc_renderer_set_default_font_family(aribcc_renderer_t* rende
  *
  * The renderer contains an auto-fallback mechanism among indicated font families.
  * The renderer also contains predefined font indications for Windows / macOS / Linux / Android.
+ * On Android, an entry may also be an absolute path to a readable font file.
  *
  * @param language_code  ISO639-2 Language Code, e.g. ARIBCC_MAKE_LANG('j', 'p', 'n')
  * @param font_family    Array of font family names
