@@ -26,6 +26,7 @@
 #include "aribcc_export.h"
 #include "context.h"
 #include "caption.h"
+#include "b62_document.h"
 #include "image.h"
 
 #ifdef __cplusplus
@@ -376,6 +377,23 @@ ARIBCC_API void aribcc_renderer_set_storage_policy(aribcc_renderer_t* renderer,
  * @return true on success
  */
 ARIBCC_API bool aribcc_renderer_append_caption(aribcc_renderer_t* renderer, const aribcc_caption_t* caption);
+
+/**
+ * Atomically append every caption and the complete resource sidecar from one
+ * ARIB STD-B62 document.
+ *
+ * The renderer copies the complete result before returning. The caller keeps
+ * ownership and must call aribcc_b62_document_result_cleanup() afterwards.
+ * On failure, no caption from the document is appended.
+ *
+ * @param renderer  @aribcc_renderer_t
+ * @param document  document returned by
+ *                  aribcc_b62_decoder_decode_document_with_resources()
+ * @return true on success
+ */
+ARIBCC_API bool aribcc_renderer_append_b62_document(
+    aribcc_renderer_t* renderer,
+    const aribcc_b62_document_result_t* document);
 
 /**
  * Retrieve expected render status at specific PTS, rather than actually do rendering.

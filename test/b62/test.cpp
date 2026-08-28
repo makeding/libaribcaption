@@ -121,6 +121,27 @@ constexpr char kFontAudioTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
   <div xml:id="embedded-image" region="image-region" begin="8s" end="10s" smpte:backgroundImage="#embedded"/></body>
 </tt>)TTML";
 
+constexpr char kBackgroundImageTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:tts="http://www.w3.org/ns/ttml#styling"
+    xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
+    xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2013/smpte-tt"
+    ttp:extent="100px 100px">
+  <head><layout>
+    <region xml:id="png" tts:origin="10px 20px" tts:extent="20px 10px"/>
+    <region xml:id="svg" tts:origin="40px 50px" tts:extent="30px 20px"/>
+  </layout></head><body><div>
+    <div region="png" begin="0s" end="1s" smpte:backgroundImage="subt://10"/>
+    <div region="svg" begin="1s" end="2s" smpte:backgroundImage="subt://11"/>
+  </div></body>
+</tt>)TTML";
+
+constexpr char kBackgroundSVG[] =
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20" fill="#00ff00"/></svg>)SVG";
+
+constexpr char kBluePNGBase64[] =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQI12NgYPj/HwADAgH/HXJk"
+    "1AAAAABJRU5ErkJggg==";
+
 constexpr char kSVGFontTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
     xmlns:tts="http://www.w3.org/ns/ttml#styling"
     xmlns:ttp="http://www.w3.org/ns/ttml#parameter"
@@ -673,6 +694,59 @@ int main() {
     assert(embedded_image.source.resolved->bytes->size() == 4);
 
 #ifndef ARIBCC_NO_RENDERER
+    const std::vector<uint8_t> background_png = DecodeBase64(kBluePNGBase64);
+    aribcaption::B62ResourceView background_resources[2];
+    background_resources[0].index = 10;
+    background_resources[0].data = background_png.data();
+    background_resources[0].size = background_png.size();
+    background_resources[0].mime_type = "image/png";
+    background_resources[1].index = 11;
+    background_resources[1].data =
+        reinterpret_cast<const uint8_t*>(kBackgroundSVG);
+    background_resources[1].size = std::strlen(kBackgroundSVG);
+    background_resources[1].mime_type = "image/svg+xml";
+    aribcaption::B62ResourceContextView background_resource_context;
+    background_resource_context.scope_id = 44;
+    background_resource_context.resources = background_resources;
+    background_resource_context.resource_count = 2;
+    aribcaption::B62DocumentDecodeResult background_document;
+    aribcaption::B62Decoder background_decoder(context);
+    status = background_decoder.DecodeDocument(
+        reinterpret_cast<const uint8_t*>(kBackgroundImageTTML),
+        std::strlen(kBackgroundImageTTML), font_audio_options,
+        background_resource_context, background_document);
+    assert(status == aribcaption::B62DecodeStatus::kGotCaption);
+    assert(background_document.sidecar);
+    assert(background_document.sidecar->background_images().size() == 2);
+
+    aribcaption::Renderer background_renderer(context);
+    assert(background_renderer.Initialize());
+    assert(background_renderer.SetFrameSize(100, 100));
+    assert(background_renderer.SetMargins(0, 0, 0, 0));
+    assert(background_renderer.AppendB62Document(std::move(background_document)));
+    aribcaption::RenderResult background_render_result;
+    assert(background_renderer.Render(0, background_render_result) ==
+           aribcaption::RenderStatus::kGotImage);
+    assert(background_render_result.images.size() == 1);
+    const aribcaption::Image& png_image = background_render_result.images[0];
+    assert(png_image.dst_x == 10 && png_image.dst_y == 20);
+    assert(png_image.width == 20 && png_image.height == 10);
+    assert(png_image.bitmap[0] == 0 && png_image.bitmap[1] == 0 &&
+           png_image.bitmap[2] == 255 && png_image.bitmap[3] == 255);
+
+    assert(background_renderer.Render(1000, background_render_result) ==
+           aribcaption::RenderStatus::kGotImage);
+    assert(background_render_result.images.size() == 1);
+    const aribcaption::Image& svg_background = background_render_result.images[0];
+    assert(svg_background.dst_x == 40 && svg_background.dst_y == 50);
+    assert(svg_background.width == 30 && svg_background.height == 20);
+    assert(svg_background.bitmap[0] == 0 && svg_background.bitmap[1] >= 254 &&
+           svg_background.bitmap[2] == 0 && svg_background.bitmap[3] == 255);
+    background_renderer.Flush();
+    background_decoder.Reset();
+    assert(background_renderer.Render(1000, background_render_result) ==
+           aribcaption::RenderStatus::kNoImage);
+
     aribcaption::B62Decoder superimpose_decoder(
         context, aribcaption::CaptionType::kSuperimpose);
     aribcaption::B62DocumentDecodeResult superimpose_document;

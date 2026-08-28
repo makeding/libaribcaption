@@ -78,6 +78,12 @@ endif()
 
 option(ARIBCC_USE_EMBEDDED_FREETYPE "Use embedded FreeType instead of find_package from system" OFF)
 
+if(NOT ARIBCC_NO_RENDERER)
+    find_package(PNG REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PLUTOSVG REQUIRED IMPORTED_TARGET plutosvg)
+endif()
+
 if(ARIBCC_USE_CORETEXT)
     find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
     find_library(COREGRAPHICS_FRAMEWORK CoreGraphics)
@@ -258,6 +264,8 @@ if(NOT ARIBCC_NO_RENDERER)
         src/renderer/bitmap.hpp
         src/renderer/b62_font_renderer.cpp
         src/renderer/b62_font_renderer.hpp
+        src/renderer/b62_image_renderer.cpp
+        src/renderer/b62_image_renderer.hpp
         src/renderer/canvas.cpp
         src/renderer/canvas.hpp
         src/renderer/drcs_renderer.cpp
@@ -407,6 +415,10 @@ target_link_libraries(aribcaption
         $<$<BOOL:${ARIBCC_USE_DIRECTWRITE}>:windowscodecs>
         $<$<BOOL:${ARIBCC_USE_GDI_FONT}>:gdi32>
 )
+
+if(NOT ARIBCC_NO_RENDERER)
+    target_link_libraries(aribcaption PRIVATE PNG::PNG PkgConfig::PLUTOSVG)
+endif()
 
 # vcpkg uses optimized/debug keyword in XXXXX_LIBRARIES variables
 # which is incompatible with generator expressions

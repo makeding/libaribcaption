@@ -28,6 +28,7 @@
 #include "aribcaption/renderer.hpp"
 #include "base/logger.hpp"
 #include "renderer/region_renderer.hpp"
+#include "renderer/b62_image_renderer.hpp"
 
 namespace aribcaption::internal {
 
@@ -71,9 +72,15 @@ public:
 private:
     void LoadDefaultFontFamilies();
     bool IsValidCaption(const Caption& caption) const;
+    bool CommitB62Document(std::vector<Caption> captions,
+                           std::shared_ptr<const B62DocumentSidecar> sidecar);
     void AppendStoredCaption(StoredCaption&& stored_caption);
     void CleanupCaptionsIfNecessary();
     void AdjustCaptionArea(int origin_plane_width, int origin_plane_height);
+    bool HasActiveB62Background(const StoredCaption& stored_caption, int64_t pts) const;
+    bool RenderB62Backgrounds(const StoredCaption& stored_caption,
+                              int64_t pts,
+                              std::vector<Image>& images);
     void InvalidatePrevRenderedImages();
 private:
     static Image MergeImages(std::vector<Image>& images);
@@ -120,6 +127,7 @@ private:
     std::map<int64_t, StoredCaption> captions_;
 
     RegionRenderer region_renderer_;
+    B62ImageRenderer b62_image_renderer_;
 
     bool has_prev_rendered_caption_ = false;
     int64_t prev_rendered_caption_pts_ = PTS_NOPTS;

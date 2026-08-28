@@ -27,7 +27,10 @@
 namespace aribcaption::internal {
 
 RendererImpl::RendererImpl(Context& context)
-    : context_(context), log_(GetContextLogger(context)), region_renderer_(context) {}
+    : context_(context),
+      log_(GetContextLogger(context)),
+      region_renderer_(context),
+      b62_image_renderer_(context) {}
 
 RendererImpl::~RendererImpl() = default;
 
@@ -219,30 +222,47 @@ bool RendererImpl::AppendCaption(Caption&& caption) {
 }
 
 bool RendererImpl::AppendB62Document(const B62DocumentDecodeResult& document) {
-    for (const Caption& caption : document.captions) {
-        if (!IsValidCaption(caption)) {
-            return false;
-        }
-    }
-
-    for (const Caption& caption : document.captions) {
-        AppendStoredCaption(StoredCaption{caption, document.sidecar});
-    }
-    return true;
+    return CommitB62Document(document.captions, document.sidecar);
 }
 
 bool RendererImpl::AppendB62Document(B62DocumentDecodeResult&& document) {
-    for (const Caption& caption : document.captions) {
+    return CommitB62Document(std::move(document.captions),
+                             std::move(document.sidecar));
+}
+
+bool RendererImpl::CommitB62Document(
+    std::vector<Caption> captions,
+    std::shared_ptr<const B62DocumentSidecar> sidecar) {
+    for (const Caption& caption : captions) {
         if (!IsValidCaption(caption)) {
             return false;
         }
     }
 
-    std::shared_ptr<const B62DocumentSidecar> sidecar = std::move(document.sidecar);
-    for (Caption& caption : document.captions) {
-        AppendStoredCaption(StoredCaption{std::move(caption), sidecar});
+    std::map<int64_t, StoredCaption> staged = captions_;
+    bool invalidate_previous = false;
+    for (Caption& caption : captions) {
+        const int64_t pts = caption.pts;
+        auto next = staged.lower_bound(pts);
+        if (next != staged.begin()) {
+            auto previous = std::prev(next);
+            if (previous->first < pts &&
+                previous->second.caption.wait_duration == DURATION_INDEFINITE) {
+                previous->second.caption.wait_duration =
+                    pts - previous->second.caption.pts;
+            }
+        }
+        staged.insert_or_assign(pts,
+                                StoredCaption{std::move(caption), sidecar});
+        invalidate_previous = invalidate_previous ||
+                              pts <= prev_rendered_caption_pts_;
     }
-    document.captions.clear();
+
+    captions_.swap(staged);
+    if (invalidate_previous) {
+        InvalidatePrevRenderedImages();
+    }
+    CleanupCaptionsIfNecessary();
     return true;
 }
 
@@ -329,7 +349,7 @@ RenderStatus RendererImpl::TryRender(int64_t pts) {
         // Timeout
         return RenderStatus::kNoImage;
     }
-    if (caption.regions.empty()) {
+    if (caption.regions.empty() && !HasActiveB62Background(iter->second, pts)) {
         return RenderStatus::kNoImage;
     }
 
@@ -370,7 +390,7 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
         InvalidatePrevRenderedImages();
         return RenderStatus::kNoImage;
     }
-    if (caption.regions.empty()) {
+    if (caption.regions.empty() && !HasActiveB62Background(iter->second, pts)) {
         InvalidatePrevRenderedImages();
         return RenderStatus::kNoImage;
     }
@@ -444,6 +464,10 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
     }
 
     std::vector<Image> images;
+    if (!RenderB62Backgrounds(iter->second, pts, images)) {
+        InvalidatePrevRenderedImages();
+        return RenderStatus::kError;
+    }
     for (CaptionRegion* region : render_regions) {
 
         Result<Image, RegionRenderError> result = region_renderer_.RenderCaptionRegion(*region, caption.drcs_map);
@@ -468,6 +492,61 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
     out_result.duration = caption.wait_duration;
     out_result.images = prev_rendered_images_;
     return RenderStatus::kGotImage;
+}
+
+bool RendererImpl::HasActiveB62Background(const StoredCaption& stored_caption,
+                                          int64_t pts) const {
+    if (!stored_caption.b62_sidecar) {
+        return false;
+    }
+    for (const B62BackgroundImage& image :
+         stored_caption.b62_sidecar->background_images()) {
+        if (image.begin_pts != PTS_NOPTS && image.begin_pts <= pts &&
+            (!image.end_pts || pts < *image.end_pts) && image.source.resolved) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RendererImpl::RenderB62Backgrounds(const StoredCaption& stored_caption,
+                                        int64_t pts,
+                                        std::vector<Image>& images) {
+    if (!stored_caption.b62_sidecar) {
+        return true;
+    }
+    const Caption& caption = stored_caption.caption;
+    const float x_scale = static_cast<float>(video_area_width_) /
+                          static_cast<float>(caption.plane_width);
+    const float y_scale = static_cast<float>(video_area_height_) /
+                          static_cast<float>(caption.plane_height);
+    const float scale = std::min(x_scale, y_scale);
+    const int area_width = static_cast<int>(std::floor(caption.plane_width * scale));
+    const int area_height = static_cast<int>(std::floor(caption.plane_height * scale));
+    const int area_x = margin_left_ + (video_area_width_ - area_width) / 2;
+    const int area_y = margin_top_ + (video_area_height_ - area_height) / 2;
+
+    for (const B62BackgroundImage& image :
+         stored_caption.b62_sidecar->background_images()) {
+        if (image.begin_pts == PTS_NOPTS || image.begin_pts > pts ||
+            (image.end_pts && pts >= *image.end_pts) || !image.source.resolved) {
+            continue;
+        }
+        const int width = static_cast<int>(std::floor(image.layout_box.width * scale));
+        const int height = static_cast<int>(std::floor(image.layout_box.height * scale));
+        std::optional<Bitmap> bitmap = b62_image_renderer_.Render(
+            *image.source.resolved, width, height);
+        if (!bitmap) {
+            return false;
+        }
+        Image rendered = Bitmap::ToImage(std::move(*bitmap));
+        rendered.dst_x = area_x +
+            static_cast<int>(std::floor(image.layout_box.x * scale));
+        rendered.dst_y = area_y +
+            static_cast<int>(std::floor(image.layout_box.y * scale));
+        images.push_back(std::move(rendered));
+    }
+    return true;
 }
 
 Image RendererImpl::MergeImages(std::vector<Image>& images) {

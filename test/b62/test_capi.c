@@ -256,7 +256,31 @@ int main(void) {
     assert(aribcc_b62_document_sidecar_audio_cue_at(NULL, 0) == NULL);
     assert(aribcc_b62_document_sidecar_background_image_count(NULL) == 0);
     assert(aribcc_b62_document_sidecar_background_image_at(NULL, 0) == NULL);
+
+#ifndef ARIBCC_NO_RENDERER
+    aribcc_renderer_t* renderer = aribcc_renderer_alloc(context);
+    assert(renderer != NULL);
+    assert(aribcc_renderer_initialize(renderer, ARIBCC_CAPTIONTYPE_CAPTION,
+                                      ARIBCC_FONTPROVIDER_TYPE_AUTO,
+                                      ARIBCC_TEXTRENDERER_TYPE_AUTO));
+    assert(aribcc_renderer_set_frame_size(renderer, 1920, 1080));
+    assert(aribcc_renderer_set_margins(renderer, 0, 0, 0, 0));
+    assert(aribcc_renderer_append_b62_document(renderer, &document_result));
     aribcc_b62_document_result_cleanup(&document_result);
+    assert(document_result.captions == NULL && document_result.caption_count == 0 &&
+           document_result.sidecar == NULL);
+    aribcc_render_result_t render_result = {0};
+    assert(aribcc_renderer_render(renderer, 0, &render_result) ==
+           ARIBCC_RENDER_STATUS_GOT_IMAGE);
+    assert(render_result.image_count != 0 && render_result.images != NULL);
+    aribcc_render_result_cleanup(&render_result);
+    aribcc_renderer_flush(renderer);
+    assert(aribcc_renderer_render(renderer, 0, &render_result) ==
+           ARIBCC_RENDER_STATUS_NO_IMAGE);
+    aribcc_renderer_free(renderer);
+#else
+    aribcc_b62_document_result_cleanup(&document_result);
+#endif
     assert(document_result.captions == NULL && document_result.caption_count == 0 &&
            document_result.sidecar == NULL);
     aribcc_b62_document_result_cleanup(&document_result);

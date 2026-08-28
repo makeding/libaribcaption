@@ -17,6 +17,7 @@
 
 #include "aribcaption/b62_document.hpp"
 #include "decoder/b62_caption_capi_conversion.hpp"
+#include "decoder/b62_document_capi_internal.hpp"
 #include "decoder/b62_decoder_capi_internal.hpp"
 
 using namespace aribcaption;
@@ -162,6 +163,15 @@ const T* ViewAt(const std::vector<T>& views, size_t index) noexcept {
 }
 
 }  // namespace
+
+namespace aribcaption::internal {
+
+std::shared_ptr<const B62DocumentSidecar> GetB62DocumentSidecarFromCAPI(
+    const aribcc_b62_document_sidecar_t* sidecar) noexcept {
+    return sidecar ? sidecar->sidecar : nullptr;
+}
+
+}  // namespace aribcaption::internal
 
 extern "C" {
 

@@ -20,6 +20,7 @@
 #include "aribcaption/aligned_alloc.hpp"
 #include "aribcaption/renderer.h"
 #include "aribcaption/renderer.hpp"
+#include "decoder/b62_document_capi_internal.hpp"
 #include "renderer/renderer_impl.hpp"
 
 using namespace aribcaption;
@@ -192,6 +193,43 @@ bool aribcc_renderer_append_caption(aribcc_renderer_t* renderer, const aribcc_ca
     auto impl = reinterpret_cast<RendererImpl*>(renderer);
     Caption cap = ConstructCaptionFromCAPI(caption);
     return impl->AppendCaption(std::move(cap));
+}
+
+bool aribcc_renderer_append_b62_document(
+    aribcc_renderer_t* renderer,
+    const aribcc_b62_document_result_t* document) {
+    if (!renderer || !document ||
+        (document->caption_count != 0 && !document->captions)) {
+        return false;
+    }
+    for (uint32_t i = 0; i < document->caption_count; ++i) {
+        const aribcc_caption_t& caption = document->captions[i];
+        if ((caption.region_count != 0 && !caption.regions)) {
+            return false;
+        }
+        for (uint32_t j = 0; j < caption.region_count; ++j) {
+            if (caption.regions[j].char_count != 0 && !caption.regions[j].chars) {
+                return false;
+            }
+        }
+    }
+
+#if defined(__cpp_exceptions)
+    try {
+#endif
+        B62DocumentDecodeResult converted;
+        converted.captions.reserve(document->caption_count);
+        for (uint32_t i = 0; i < document->caption_count; ++i) {
+            converted.captions.push_back(ConstructCaptionFromCAPI(&document->captions[i]));
+        }
+        converted.sidecar = GetB62DocumentSidecarFromCAPI(document->sidecar);
+        auto impl = reinterpret_cast<RendererImpl*>(renderer);
+        return impl->AppendB62Document(std::move(converted));
+#if defined(__cpp_exceptions)
+    } catch (...) {
+        return false;
+    }
+#endif
 }
 
 static bool ConvertImageToCAPI(const Image& image, aribcc_image_t* out_image) {
