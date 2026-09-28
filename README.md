@@ -1,3 +1,17 @@
+## NekobaTechnology フォークについて
+
+このリポジトリは [makeding/libaribcaption](https://github.com/makeding/libaribcaption) の個人用フォークで、
+[NekobaTechnology/Honorebi](https://github.com/NekobaTechnology/Honorebi) のサブモジュールとして使っています。
+ブランチ `bravia-32bit-fix` に以下の修正が入っています。
+
+- `FontProviderAndroid`: `ANDROID_ROOT` 環境変数が未設定のときに null 参照で落ちる問題を修正
+  (`/system` にフォールバック)。
+- `FontProviderAndroid::LMPHandleFont`: フォント一覧 (`font_families_`) の再確保後に無効になる
+  参照を使っていたため、32bit Android TV (Sony BRAVIA) で字幕デコーダー初期化時に SIGSEGV していた
+  問題を修正 (参照渡しからインデックス渡しに変更)。
+
+---
+
 libaribcaption
 ======
 [日本語](README_ja.md)
