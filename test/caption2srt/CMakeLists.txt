@@ -16,7 +16,7 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.28)
 
 find_path(AVCODEC_INCLUDE_DIR libavcodec/avcodec.h)
 find_library(AVCODEC_LIBRARY avcodec)
@@ -36,6 +36,8 @@ target_compile_features(test_caption2srt
 
 target_include_directories(test_caption2srt
     PRIVATE
+        ../../include
+        ../../src
         ${AVCODEC_INCLUDE_DIR}
         ${AVFORMAT_INCLUDE_DIR}
 )

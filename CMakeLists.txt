@@ -16,11 +16,11 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
 
-cmake_minimum_required(VERSION 3.11)
+cmake_minimum_required(VERSION 3.28)
 
 project(libaribcaption
     VERSION
-        1.1.1
+        1.1.2
     DESCRIPTION
         "Portable ARIB STD-B24 Caption Decoder/Renderer"
     HOMEPAGE_URL
@@ -104,30 +104,25 @@ function(import_embedded_freetype)
         USES_TERMINAL_DOWNLOAD TRUE  # show download progress in ninja
         USES_TERMINAL_CONFIGURE TRUE # show configure progress in ninja
         USES_TERMINAL_BUILD TRUE     # show build progress in ninja
+        EXCLUDE_FROM_ALL
     )
-    FetchContent_GetProperties(freetype)
-    if(NOT freetype_POPULATED)
-        # Fetch the content
-        FetchContent_Populate(freetype)
-        # Set variables for FreeType
-        # ARIB STD-B62 may deliver WOFF fonts as same-MPU resources. FreeType's
-        # WOFF driver requires zlib for compressed sfnt tables.
-        set(FT_DISABLE_ZLIB OFF CACHE BOOL "Enable zlib for embedded Freetype" FORCE)
-        set(FT_DISABLE_BZIP2 ON CACHE BOOL "Disable bzip2 for embedded Freetype" FORCE)
-        set(FT_DISABLE_PNG ON CACHE BOOL "Disable libpng for embedded Freetype" FORCE)
-        set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "Disable harfbuzz for embedded Freetype" FORCE)
-        set(FT_DISABLE_BROTLI ON CACHE BOOL "Disable brotli for embedded Freetype" FORCE)
-        set(BUILD_SHARED_LIBS OFF)       # Force static link
 
-        # Suppress CMake Policy CMP0048 warning
-        set(CMAKE_PROJECT_INCLUDE_BEFORE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EnableCMP0048.cmake")
-        # Import FreeType directory
-        add_subdirectory(${freetype_SOURCE_DIR} ${freetype_BINARY_DIR} EXCLUDE_FROM_ALL)
-        unset(CMAKE_PROJECT_INCLUDE_BEFORE)
+    # Configure FreeType CMake variables before MakeAvailable() evaluates its CMakeLists.txt
+    # B62 WOFF resources require zlib for compressed sfnt tables.
+    set(FT_DISABLE_ZLIB OFF CACHE BOOL "Enable zlib for embedded Freetype" FORCE)
+    set(FT_DISABLE_BZIP2 ON CACHE BOOL "Disable bzip2 for embedded Freetype" FORCE)
+    set(FT_DISABLE_PNG ON CACHE BOOL "Disable libpng for embedded Freetype" FORCE)
+    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "Disable harfbuzz for embedded Freetype" FORCE)
+    set(FT_DISABLE_BROTLI ON CACHE BOOL "Disable brotli for embedded Freetype" FORCE)
+    set(BUILD_SHARED_LIBS OFF)       # Force FreeType to be statically linked. This is function-scoped
 
-        set(FREETYPE_INCLUDE_DIRS "${freetype_BINARY_DIR}/include;${freetype_SOURCE_DIR}/include" PARENT_SCOPE)
-        set(FREETYPE_LIBRARIES freetype PARENT_SCOPE)
-    endif()
+    # Suppress CMake Policy CMP0048 warning while configuring FreeType
+    set(CMAKE_PROJECT_INCLUDE_BEFORE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EnableCMP0048.cmake")
+    FetchContent_MakeAvailable(freetype)
+    unset(CMAKE_PROJECT_INCLUDE_BEFORE)
+
+    set(FREETYPE_INCLUDE_DIRS "${freetype_BINARY_DIR}/include;${freetype_SOURCE_DIR}/include" PARENT_SCOPE)
+    set(FREETYPE_LIBRARIES freetype PARENT_SCOPE)
 endfunction()
 
 if(ARIBCC_USE_FREETYPE AND (NOT ARIBCC_USE_EMBEDDED_FREETYPE))

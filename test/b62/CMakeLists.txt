@@ -6,7 +6,7 @@
 # copyright notice and this permission notice appear in all copies.
 #
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.28)
 
 add_executable(test_b62
     EXCLUDE_FROM_ALL

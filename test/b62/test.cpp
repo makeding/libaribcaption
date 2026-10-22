@@ -136,11 +136,11 @@ constexpr char kBackgroundImageTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/t
 </tt>)TTML";
 
 constexpr char kBackgroundSVG[] =
-    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20" fill="#00ff00"/></svg>)SVG";
+    R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20" fill="#4080c0" fill-opacity="0.5"/></svg>)SVG";
 
-constexpr char kBluePNGBase64[] =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQI12NgYPj/HwADAgH/HXJk"
-    "1AAAAABJRU5ErkJggg==";
+constexpr char kTranslucentPNGBase64[] =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjQAAADZQGh"
+    "F94WzAAAAABJRU5ErkJggg==";
 
 constexpr char kSVGFontTTML[] = R"TTML(<tt xmlns="http://www.w3.org/ns/ttml"
     xmlns:tts="http://www.w3.org/ns/ttml#styling"
@@ -694,7 +694,7 @@ int main() {
     assert(embedded_image.source.resolved->bytes->size() == 4);
 
 #ifndef ARIBCC_NO_RENDERER
-    const std::vector<uint8_t> background_png = DecodeBase64(kBluePNGBase64);
+    const std::vector<uint8_t> background_png = DecodeBase64(kTranslucentPNGBase64);
     aribcaption::B62ResourceView background_resources[2];
     background_resources[0].index = 10;
     background_resources[0].data = background_png.data();
@@ -731,8 +731,10 @@ int main() {
     const aribcaption::Image& png_image = background_render_result.images[0];
     assert(png_image.dst_x == 10 && png_image.dst_y == 20);
     assert(png_image.width == 20 && png_image.height == 10);
-    assert(png_image.bitmap[0] == 0 && png_image.bitmap[1] == 0 &&
-           png_image.bitmap[2] == 255 && png_image.bitmap[3] == 255);
+    // B62 image resources already use straight alpha and must not be
+    // unpremultiplied a second time with the text regions.
+    assert(png_image.bitmap[0] == 32 && png_image.bitmap[1] == 96 &&
+           png_image.bitmap[2] == 160 && png_image.bitmap[3] == 128);
 
     assert(background_renderer.Render(1000, background_render_result) ==
            aribcaption::RenderStatus::kGotImage);
@@ -740,8 +742,10 @@ int main() {
     const aribcaption::Image& svg_background = background_render_result.images[0];
     assert(svg_background.dst_x == 40 && svg_background.dst_y == 50);
     assert(svg_background.width == 30 && svg_background.height == 20);
-    assert(svg_background.bitmap[0] == 0 && svg_background.bitmap[1] >= 254 &&
-           svg_background.bitmap[2] == 0 && svg_background.bitmap[3] == 255);
+    assert(svg_background.bitmap[0] >= 63 && svg_background.bitmap[0] <= 65);
+    assert(svg_background.bitmap[1] >= 127 && svg_background.bitmap[1] <= 129);
+    assert(svg_background.bitmap[2] >= 191 && svg_background.bitmap[2] <= 193);
+    assert(svg_background.bitmap[3] >= 127 && svg_background.bitmap[3] <= 128);
     background_renderer.Flush();
     background_decoder.Reset();
     assert(background_renderer.Render(1000, background_render_result) ==

@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <iterator>
 #include "aribcaption/context.hpp"
+#include "renderer/alphablend.hpp"
 #include "renderer/bitmap.hpp"
 #include "renderer/canvas.hpp"
 #include "renderer/renderer_impl.hpp"
@@ -472,6 +473,9 @@ RenderStatus RendererImpl::Render(int64_t pts, RenderResult& out_result) {
 
         Result<Image, RegionRenderError> result = region_renderer_.RenderCaptionRegion(*region, caption.drcs_map);
         if (result.is_ok()) {
+            // Text regions use premultiplied alpha internally. B62 background
+            // images already have straight alpha, so convert only the region.
+            UnpremultiplyImage(result.value());
             images.push_back(std::move(result.value()));
         } else if (result.error() == RegionRenderError::kImageTooSmall) {
             // Skip image which is too small
@@ -566,13 +570,20 @@ Image RendererImpl::MergeImages(std::vector<Image>& images) {
         int x = image.dst_x - rect.left;
         int y = image.dst_y - rect.top;
         Bitmap bmp = Bitmap::FromImage(std::move(image));
-        canvas.DrawBitmap(bmp, x, y);
+        canvas.DrawPremultipliedBitmap(bmp, x, y);
     }
 
     Image merged = Bitmap::ToImage(std::move(bitmap));
     merged.dst_x = rect.left;
     merged.dst_y = rect.top;
     return merged;
+}
+
+void RendererImpl::UnpremultiplyImage(Image& image) {
+    for (int y = 0; y < image.height; y++) {
+        auto line = reinterpret_cast<ColorRGBA*>(image.bitmap.data() + static_cast<size_t>(y) * image.stride);
+        alphablend::UnpremultiplyLine(line, static_cast<size_t>(image.width));
+    }
 }
 
 void RendererImpl::AdjustCaptionArea(int origin_plane_width, int origin_plane_height) {
@@ -582,8 +593,8 @@ void RendererImpl::AdjustCaptionArea(int origin_plane_width, int origin_plane_he
 
     int caption_area_width = static_cast<int>(std::floor(static_cast<float>(origin_plane_width) * magnification));
     int caption_area_height = static_cast<int>(std::floor(static_cast<float>(origin_plane_height) * magnification));
-    int caption_area_start_x = (video_area_width_ - caption_area_width) / 2;
-    int caption_area_start_y = (video_area_height_ - caption_area_height) / 2;
+    int caption_area_start_x = video_area_start_x_ + (video_area_width_ - caption_area_width) / 2;
+    int caption_area_start_y = video_area_start_y_ + (video_area_height_ - caption_area_height) / 2;
 
     Rect caption_area(caption_area_start_x,
                       caption_area_start_y,

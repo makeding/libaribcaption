@@ -72,6 +72,8 @@ bool TextRendererFreetype::SetFontFamily(const std::vector<std::string>& font_fa
         fallback_face_data_.clear();
         main_baseline_cache_.clear();
         fallback_baseline_cache_.clear();
+        main_halfwidth_subst_map_.reset();
+        fallback_halfwidth_subst_map_.reset();
         main_face_index_ = 0;
     }
 
@@ -138,9 +140,9 @@ static auto CalculateIdeographicCharacterFaceBaseline(FT_Face face, int char_hei
     // estimating them from representative ideographic and kana glyph bounds.
     // Until this renderer parses the BASE table, use that recommended fallback.
     static constexpr uint32_t kReferenceChars[] = {
-            0x6C38,  // CJK ideograph "永"
-            0x56FD,  // CJK ideograph "国"
-            0x3042,  // Hiragana "あ"
+        0x6C38,  // CJK ideograph "永"
+        0x56FD,  // CJK ideograph "国"
+        0x3042,  // Hiragana "あ"
     };
 
     for (uint32_t ch : kReferenceChars) {
@@ -212,6 +214,7 @@ auto TextRendererFreetype::DrawChar(TextRenderContext& render_ctx, int target_x,
             std::pair<FT_Face, size_t>& pair = result.value();
             fallback_face_ = ScopedHolder<FT_Face>(pair.first, FT_Done_Face);
             fallback_baseline_cache_.clear();
+            fallback_halfwidth_subst_map_.reset();
 
             // Use this fallback fontface for rendering this time
             face = fallback_face_;

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iterator>
+#include "renderer/alphablend.hpp"
 #include "renderer/bitmap.hpp"
 #include "renderer/canvas.hpp"
 #include "renderer/enclosure_geometry.hpp"
@@ -144,7 +145,7 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
                               section_x + ScaleWidth(ch.section_width(), ch.x),
                               section_y + ScaleHeight(ch.section_height(), ch.y));
             if (section_rect.width() >= 3 && section_rect.height() >= 3) {
-                canvas.ClearRect(ch.back_color, section_rect);
+                canvas.ClearRect(alphablend::Premultiply(ch.back_color), section_rect);
             }
         }
     }
@@ -206,7 +207,7 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
                  group.rects,
                  group.horizontal_thickness,
                  group.vertical_thickness)) {
-            canvas.ClearRect(segment.color, segment.rect);
+            canvas.ClearRect(alphablend::Premultiply(segment.color), segment.rect);
         }
     }
 
@@ -227,6 +228,7 @@ auto RegionRenderer::RenderCaptionRegion(const CaptionRegion& region,
             ColorRGBA enclosure_color = (ch.style & CharStyle::kCharStyleColoredEnclosure)
                 ? ch.enclosure_color
                 : ch.text_color;
+            enclosure_color = alphablend::Premultiply(enclosure_color);
             const int plane_thickness = ch.enclosure_thickness > 0 ? ch.enclosure_thickness : 1;
             int w = std::max(ScaleX(plane_thickness), 1);  // use floor
             int h = std::max(ScaleY(plane_thickness), 1);  // use floor

@@ -16,13 +16,16 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.28)
 
 find_path(AVCODEC_INCLUDE_DIR libavcodec/avcodec.h)
 find_library(AVCODEC_LIBRARY avcodec)
 
 find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h)
 find_library(AVFORMAT_LIBRARY avformat)
+
+find_path(AVUTIL_INCLUDE_DIR libavutil/error.h)
+find_library(AVUTIL_LIBRARY avutil)
 
 add_executable(test_ffmpeg
     EXCLUDE_FROM_ALL
@@ -42,6 +45,7 @@ target_include_directories(test_ffmpeg
         ../stopwatch/include
         ${AVCODEC_INCLUDE_DIR}
         ${AVFORMAT_INCLUDE_DIR}
+        ${AVUTIL_INCLUDE_DIR}
 )
 
 target_link_libraries(test_ffmpeg
@@ -50,6 +54,7 @@ target_link_libraries(test_ffmpeg
         png_writer
         ${AVCODEC_LIBRARY}
         ${AVFORMAT_LIBRARY}
+        ${AVUTIL_LIBRARY}
 )
 
 set_target_properties(test_ffmpeg

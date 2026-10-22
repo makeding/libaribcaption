@@ -81,7 +81,7 @@ private:
 private:
     bool HandleFamilySetLMP(tinyxml2::XMLElement* root);
     bool LMPHandleFamily(tinyxml2::XMLElement* element);
-    bool LMPHandleFont(tinyxml2::XMLElement* element, size_t family_index);
+    bool LMPHandleFont(tinyxml2::XMLElement* element, internal::FontFamily& family);
     bool LMPHandleAlias(tinyxml2::XMLElement* element);
 private:
     bool HandleFamilySetOLD(tinyxml2::XMLElement* root);

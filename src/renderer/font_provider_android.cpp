@@ -329,10 +329,7 @@ bool FontProviderAndroid::HandleFamilySetLMP(XMLElement* root) {
 }
 
 bool FontProviderAndroid::LMPHandleFamily(XMLElement* element) {
-    // LMPHandleFont が fallback family を font_families_ に追加すると再確保で
-    // 参照が無効になるため、family はインデックスで渡す。
-    const size_t family_index = font_families_.size();
-    FontFamily& current_family = font_families_.emplace_back();
+    FontFamily current_family;
 
     if (const char* name = element->Attribute("name")) {
         current_family.names.emplace_back(name);
@@ -356,18 +353,24 @@ bool FontProviderAndroid::LMPHandleFamily(XMLElement* element) {
 
     while (element) {
         if (strcmp(element->Name(), "font") == 0) {
-            LMPHandleFont(element, family_index);
+            LMPHandleFont(element, current_family);
         }
         element = element->NextSiblingElement();
     }
 
+    font_families_.push_back(std::move(current_family));
+
     return true;
 }
 
-bool FontProviderAndroid::LMPHandleFont(XMLElement* element, size_t family_index) {
-    FontFamily& family = font_families_[family_index];
+bool FontProviderAndroid::LMPHandleFont(XMLElement* element, internal::FontFamily& family) {
+    const char* filename = element->GetText();
+    if (!filename) {
+        return false;
+    }
+
     FontFile font;
-    font.filename = element->GetText();
+    font.filename = filename;
     font.weight = element->IntAttribute("weight", 400);
     font.collection_index = element->IntAttribute("index", 0);
 
@@ -381,19 +384,18 @@ bool FontProviderAndroid::LMPHandleFont(XMLElement* element, size_t family_index
         font.postscript_name = postscript_name;
     }
 
-    const char* fallback_for = element->Attribute("fallbackFor");
-    if (fallback_for && !family.languages.empty()) {
+    if (const char* fallback_for = element->Attribute("fallbackFor")) {
+        if (family.languages.empty()) {
+            return false;
+        }
+
         FontFamily* fallback_family =
                 FindFallbackFamilyByLanguageAndFallbackFor(family.languages[0].c_str(),
                                                            fallback_for);
         if (!fallback_family) {
-            // emplace_back で font_families_ が再確保されると family 参照が無効になるため、
-            // 必要な値は先にコピーしておく。
-            std::vector<std::string> languages = family.languages;
-            FontVariant variant = family.variant;
             FontFamily& new_fallback_family = font_families_.emplace_back();
-            new_fallback_family.languages = std::move(languages);
-            new_fallback_family.variant = variant;
+            new_fallback_family.languages = family.languages;
+            new_fallback_family.variant = family.variant;
             new_fallback_family.is_fallback = true;
             new_fallback_family.fallback_for = fallback_for;
             new_fallback_family.fonts.push_back(std::move(font));
@@ -401,7 +403,7 @@ bool FontProviderAndroid::LMPHandleFont(XMLElement* element, size_t family_index
             fallback_family->fonts.push_back(std::move(font));
         }
     } else {
-        font_families_[family_index].fonts.push_back(std::move(font));
+        family.fonts.push_back(std::move(font));
     }
 
     return true;
